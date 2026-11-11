@@ -1,0 +1,23 @@
+# dsh-bot-tui bundle patch.
+#
+# Mounts, on top of the dsh-TUI profile:
+#   1. the `connection` stub DS Bot registers its web routes on,
+#   2. the `sessionController` adapter (the web profile's session service),
+#   3. the DS Bot host runtime itself,
+#   4. the /bots roster scene and its command.
+#
+# Rows load in order, but correctness does not depend on that: DS Bot's inject
+# list holds it until `connection` is provided, and the UI row waits for
+# `commands` + `tuiScenes` from dsh-TUI.
+- insert:
+    - id: bot-connection
+      name: 'dsh-bot-tui/connection'
+
+    - id: bot-session-controller
+      name: 'dsh-bot-tui/controller'
+
+    - id: bot
+      name: 'ds-bot'
+
+    - id: bot-tui
+      name: 'dsh-bot-tui'

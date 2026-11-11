@@ -1,0 +1,53 @@
+{
+  "name": "dsh-bot-tui",
+  "version": "0.1.0",
+  "description": "DS Bot's Bot team in the terminal, built on dsh-TUI",
+  "author": "yuxin <1727414387@qq.com>",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./connection": "./src/connection.js",
+    "./controller": "./src/controller.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "cordis.patch.yml",
+    "dsh-plugin.json",
+    "README.md",
+    "README.zh.md",
+    "LICENSE",
+    "patches/"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-tui",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ds-bot",
+    "bots",
+    "tui",
+    "terminal"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "homepage": "https://github.com/yuxin-2/dsh-bot-tui#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuxin-2/dsh-bot-tui.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yuxin-2/dsh-bot-tui/issues"
+  }
+}

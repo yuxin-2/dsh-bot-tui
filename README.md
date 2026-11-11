@@ -1,2 +1,226 @@
 # dsh-bot-tui
-dsh-bot for tui
+
+[English](README.md) · [中文](README.zh.md)
+
+**DS Bot's Bot team, in the terminal — built on [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI).**
+
+`dsh-bot-tui` is a [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) plugin that
+brings the Bot team from [DS Bot](https://github.com/Fei2411/DS-Bot) into a
+terminal session. `/bots` opens a full-screen roster; `Enter` opens that Bot's
+chat. The Bot keeps its identity, memory, model and team tools — the turn runs
+on DS Bot's own runtime, inside the same DSH kernel as the terminal.
+
+> Status: experimental. Verified against dsh-TUI 0.19.0, DSH 0.2.2-rc.1 and
+> DS Bot 0.3.2. Not affiliated with the dsh-TUI or DS Bot maintainers.
+
+---
+
+## Built on dsh-TUI
+
+This project is **not a fork of dsh-TUI** and does not modify it. It is a
+third-party plugin that consumes dsh-TUI's public plugin seams:
+
+| dsh-TUI seam | What this plugin does with it |
+| --- | --- |
+| `ctx.tuiScenes.register()` | Registers the `ds-bot-team` full-screen roster (the `/bots` screen) |
+| `ctx.commands.register()` | Registers the `/bots` slash command that opens it |
+| `TuiSceneProps.channel` | Reads `channel.provider` / `channel.model` to create a Bot on the terminal's live route, and calls `channel.resumeTo(sessionId)` to open a Bot's chat |
+
+There is deliberately **no chat renderer here**. Entering a Bot calls
+`channel.resumeTo()` and hands the terminal back to dsh-TUI's own Chat screen:
+whatever you type, and however it is drawn, is stock dsh-TUI. The scene is only
+a roster.
+
+The same rule applies to dsh-TUI's React contract: the scene uses the injected
+`React` and `ui` kit from `TuiSceneProps`, so it runs on dsh-TUI's own React 19
+reconciler. No second React, no private imports.
+
+## Built on DS Bot
+
+DS Bot ships the team as a DSH plugin plus a browser client. This package mounts
+the **host** half in the TUI profile and adds the two services the browser half
+would normally provide, so the Bot runtime works without a web server:
+
+| Row | Role |
+| --- | --- |
+| `dsh-bot-tui/connection` | Provides the `connection` service DS Bot registers its `/api/bot` and `/api/bot/feed` routes on. The terminal has no HTTP server, so registration is kept in memory and the disposer contract is preserved. |
+| `dsh-bot-tui/controller` | Provides `sessionController` on top of the local Agent registry: `create`, `selectModel`, `prompt`, `resolveAgent`, `page`. DS Bot calls these for Bot/group sessions, model moves, and deliveries. |
+| `dsh-bot-tui` | The `/bots` command and roster scene described above. |
+
+What stays DS Bot's: Bot identity, roster, persona and system prompt, memory,
+cross-Bot messages, group chats, approvals, handoffs, schedules. What stays
+DSH's: agent loop, tools, model routes, sessions. This repo adds neither.
+
+## Install
+
+Requirements: Node `^22.19` or `>=24`, a working `dsh` installation, and
+`dsh-TUI` 0.19.x installed in a profile.
+
+### 1. Get DS Bot and this plugin
+
+```bash
+git clone https://github.com/Fei2411/DS-Bot.git
+git clone https://github.com/yuxin-2/dsh-bot-tui.git
+```
+
+Apply the one-row runtime patch so the terminal can own the DS Bot runtime
+(see [The one-row DS Bot patch](#the-one-row-ds-bot-patch) below):
+
+```bash
+cd DS-Bot
+git apply /path/to/dsh-bot-tui/patches/ds-bot-expose-runtime.patch
+```
+
+### 2. Add both to the TUI profile
+
+Edit `~/.dsh/profiles/dsh-tui/package.json`:
+
+```json
+{
+  "dependencies": {
+    "@deepseek-harness-tui/dsh-tui": "0.19.0",
+    "ds-bot": "file:/path/to/DS-Bot/ds-bot",
+    "dsh-bot-tui": "link:/path/to/dsh-bot-tui"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-harness-tui/dsh-tui",
+        "dsh-bot-tui"
+      ],
+      "patchReload": "live"
+    }
+  }
+}
+```
+
+Two details matter:
+
+- `ds-bot` must be a `file:` dependency, not `link:` — its runtime dependencies
+  (`playwright-core`, `imapflow`, …) have to be installed into the profile by
+  pnpm. A `link:` would leave them missing.
+- `ds-bot` must **not** be listed in `bundles`. Its own `cordis.patch.yml`
+  inserts the same `bot` row and adds web-only overrides; this package's patch
+  mounts the row instead.
+
+```bash
+cd ~/.dsh/profiles/dsh-tui
+pnpm install
+```
+
+### 3. Run
+
+```bash
+dsh --profile dsh-tui
+/bots
+```
+
+## Use
+
+```
+↑/↓      move                    Enter   open that Bot's chat
+n        create Chief (empty team) r      re-read state.json
+g / G    first / last              q      back to the chat
+```
+
+On an empty team, `n` creates the first Main Bot, **Chief**, on the terminal's
+current model route and saves it. Chief's greeting runs as a normal Bot turn and
+appears in the chat. Everything else (more Bots, groups, handoffs) is Chief's
+job: ask it in the chat, and it uses its own team tools.
+
+## The one-row DS Bot patch
+
+`patches/ds-bot-expose-runtime.patch` adds four lines to
+`ds-bot/index.js`:
+
+```js
+if (typeof ctx.provide === 'function') ctx.provide('dsBot', rt)
+```
+
+DS Bot's `apply()` discards the runtime object today, so no other plugin can
+reach `createBot()` / `bootstrap()`. Publishing it as a cordis service is the
+smallest change that lets a different front end share the same runtime; the web
+API keeps working in-process.
+
+- **Without the patch:** `/bots`, roster, and chatting still work; only creating
+  a team from the terminal (`n`) is unavailable.
+- **With the patch:** the terminal can create the first Main Bot.
+- Upstream PR pending. If you prefer no local patch, wait for the service to
+  land, or carry the patch with `patch-package`.
+
+## How it works
+
+```
+dsh --profile dsh-tui (one process)
+├─ @deepseek-ai/dsh-base            DSH kernel: sessions, agents, tools, llm
+├─ @deepseek-harness-tui/dsh-tui    terminal: Chat, scenes, commands, channel
+└─ dsh-bot-tui bundle patch
+   ├─ bot-connection    connection stub (no HTTP)
+   ├─ bot-controller    sessionController on ctx.agents
+   ├─ bot               ds-bot host runtime (persona, memory, team tools)
+   └─ bot-tui           /bots scene + command
+```
+
+`Enter` on a Bot calls `channel.resumeTo(bot.sessionId)`. The Bot's session is a
+normal DSH session, so dsh-TUI replays its transcript, and the next prompt goes
+through the ordinary agent loop. Because the DS Bot host is live in the same
+process and keys its prompt/tool scoping by session identity, that turn gets
+the Bot's persona, memory and team tools.
+
+The roster reads `$DSH_HOME/bot/state.json` directly. That is safe: DS Bot saves
+with a temp-file rename under its own lock, so a reader sees a complete revision.
+
+## Limitations
+
+- **One writer per team.** DS Bot's desktop/web app and this terminal share
+  `$DSH_HOME/bot`. While another host holds the lock, the TUI host goes
+  read-only: the roster shows a warning and turns may not persist. Close the
+  other app first.
+- **No dedicated screens** for groups, approvals, memory or model management.
+  Those flows stay inside Bot chat and the cards Bots render.
+- **`page()` is a stub** returning an empty page: handoff notes and memory
+  read-back degrade; ordinary chat is unaffected.
+- **The patch above** is required for creating a team from the terminal.
+- The roster polls `state.json` once per second while open; it is not a live
+  push channel.
+
+## Development
+
+```bash
+node --check src/index.js src/scene.js src/controller.js src/connection.js
+dsh --profile dsh-tui          # boot check: no "did not activate" warnings
+/bots                          # smoke: roster renders, Enter opens a chat
+```
+
+After editing DS Bot's host code, refresh the profile's `file:` copy:
+
+```bash
+cd ~/.dsh/profiles/dsh-tui && pnpm install --force
+```
+
+Layout:
+
+```
+src/index.js       cordis plugin entry: /bots command + scene registration
+src/scene.js       TeamScene: roster, key handling, resumeTo, create Chief
+src/controller.js  sessionController adapter on ctx.agents
+src/connection.js  connection service stub
+cordis.patch.yml   profile rows inserted by this bundle
+patches/           the upstream DS Bot patch
+```
+
+There is no automated test suite yet; verification is the boot check plus the
+`/bots` smoke flow above. Contributions for a headless harness are welcome.
+
+## License and credits
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+- [DS Bot](https://github.com/Fei2411/DS-Bot) — © 2026 Fei2411 and the DS Bot
+  contributors, Apache-2.0. Bot identity, memory, tools and the host runtime are
+  theirs; this repo only adapts the transport for a terminal.
+- [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) — © 2026 chimney, MIT. The
+  terminal UI, scene/command seams and `channel` are theirs; this repo does not
+  modify it.
+- No third-party source code is copied into this repository.

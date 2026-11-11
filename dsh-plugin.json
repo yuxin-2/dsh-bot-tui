@@ -1,0 +1,45 @@
+{
+  "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
+  "id": "io.github.dsh-bot-tui",
+  "name": "DS Bot for dsh-TUI",
+  "version": "0.1.0",
+  "manifestVersion": "0.15",
+  "facets": {
+    "host": {
+      "entry": "src/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "commands.dsh/v1alpha1",
+        "kind": "Command"
+      },
+      {
+        "apiVersion": "tui.dsh/v1alpha1",
+        "kind": "Scene"
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "name": "commands.invoke",
+      "scope": "dsh-bot-tui.bots",
+      "reason": "run /bots to open the Bot roster"
+    }
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "dsh-bot-tui.bots",
+        "title": "Bots"
+      }
+    ]
+  },
+  "subscriptions": [],
+  "license": "Apache-2.0",
+  "source": {
+    "repository": "https://github.com/yuxin-2/dsh-bot-tui"
+  }
+}

@@ -1,0 +1,15 @@
+diff --git a/ds-bot/index.js b/ds-bot/index.js
+index 8b356179..0f9a57e6 100644
+--- a/ds-bot/index.js
++++ b/ds-bot/index.js
+@@ -81,6 +81,10 @@ export function createRuntime(ctx, config = {}) {
+       mainRole: config.mainRole ?? 'Chief of Staff',
+     },
+   }
++  // A front end without the web API (the terminal) needs the same entry points the
++  // browser reaches over /api/bot: publish the runtime as a cordis service. The web
++  // API keeps calling it in-process; nothing changes for the browser.
++  if (typeof ctx.provide === 'function') ctx.provide('dsBot', rt)
+   for (const module of MODULES) module.install(rt)
+   // A live Agent can be scoped before the last module has added its tools (the memory
+   // module starts a load during install): complete the scope now that every tool is in.
