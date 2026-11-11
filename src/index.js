@@ -3,12 +3,14 @@
 // The DS Bot host plugin runs on its own row (`bot`, mounted by this bundle's
 // patch), so a Bot Session opened here is the same Session the Bot runs in the
 // browser: its persona, memory and team tools come from that runtime, keyed by
-// session identity. This row only adds the terminal surface:
+// session identity. This row adds the terminal surface:
 //
-//   /bots  →  a full-screen team list  →  Enter  →  resumeTo(bot.sessionId)
+//   /bots  →  a full-screen team roster  →  Enter  →  resumeTo(bot.sessionId)
 //
-// The Chat screen underneath does the rendering and input; the scene is only a
-// roster, so no transcript is duplicated and no second agent is created.
+// The Chat screen underneath does the rendering and input; the scene is a
+// roster plus a few fleet actions (message, create, stop, delete), so no
+// transcript is duplicated and no second agent is created.
+import { install as installActivity } from './activity.js'
 import { TeamScene, bindRuntime } from './scene.js'
 
 export const name = 'dsh-bot-tui'
@@ -21,6 +23,8 @@ const SCENE_ID = 'ds-bot-team'
 
 export function apply(ctx) {
   bindRuntime(() => ctx.get('dsBot', false))
+  installActivity(ctx)
+
   const disposeScene = ctx.tuiScenes.register({
     id: SCENE_ID,
     title: 'DS Bot team',

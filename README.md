@@ -119,15 +119,25 @@ dsh --profile dsh-tui
 ## Use
 
 ```
-↑/↓      move                    Enter   open that Bot's chat
-n        create Chief (empty team) r      re-read state.json
-g / G    first / last              q      back to the chat
+↑/↓      move                      Enter   open that Bot's chat
+m        message without leaving    c      create a Bot (name,role)
+s        stop that Bot's turn       x      delete (press twice)
+n        create Chief (empty team)  r      re-read state.json
+q / Esc  back to the chat
 ```
 
-On an empty team, `n` creates the first Main Bot, **Chief**, on the terminal's
-current model route and saves it. Chief's greeting runs as a normal Bot turn and
-appears in the chat. Everything else (more Bots, groups, handoffs) is Chief's
-job: ask it in the chat, and it uses its own team tools.
+Rows show live state: `工作中 Ns` (a turn is running), `待回答` (a card is
+waiting for you), `空闲`, `●新` (a reply arrived since you last opened it), and
+`当前` for the Bot whose chat the terminal is on.
+
+On an empty team, `n` creates the first Main Bot, **Chief**, on a model route
+this terminal can actually reach, and saves it. Chief's greeting runs as a
+normal Bot turn and appears in the chat. Everything else (more Bots, groups,
+handoffs) is Chief's job: ask it in the chat, and it uses its own team tools.
+
+`m` sends to a Bot without switching the screen: an idle Bot is mounted, given
+the message, and parked again; a working Bot queues it. The roster keeps
+updating, so you can fire off work to several Bots in a row.
 
 ## The one-row DS Bot patch
 
@@ -173,6 +183,10 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
 
 ## Limitations
 
+- **Bots only run while the terminal is open.** DS Bot's web/desktop host is a
+  long-lived server; this plugin runs the same runtime inside the TUI process.
+  Closing the terminal ends every running turn. For truly always-on Bots, keep
+  the TUI open (or use DS Bot's own desktop app).
 - **One writer per team.** DS Bot's desktop/web app and this terminal share
   `$DSH_HOME/bot`. While another host holds the lock, the TUI host goes
   read-only: the roster shows a warning and turns may not persist. Close the
