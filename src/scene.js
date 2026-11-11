@@ -34,7 +34,7 @@ export function readTeam() {
   const home = join(dshHome(), 'bot')
   const statePath = join(home, 'state.json')
   const lockPath = join(home, 'state.lock')
-  const team = { bots: [], revision: undefined, mainId: undefined, error: '', foreign: undefined }
+  const team = { bots: [], pending: [], revision: undefined, mainId: undefined, error: '', foreign: undefined }
 
   try {
     const state = JSON.parse(readFileSync(statePath, 'utf8'))
@@ -51,7 +51,11 @@ export function readTeam() {
       blocked: bot.blocked?.code,
       waiting: bot.kickoff !== undefined,
       workDir: bot.workDir ?? '',
+      capabilities: Array.isArray(bot.capabilities) ? bot.capabilities : [],
     }))
+    team.pending = Object.values(state.capabilities?.items ?? {})
+      .filter((item) => item?.kind === 'mcp' && item.transport === 'stdio' && item.approved !== true)
+      .map((item) => ({ name: item.name, description: item.description ?? '', createdBy: item.createdBy ?? '' }))
   } catch (error) {
     team.error = error?.code === 'ENOENT'
       ? `还没有团队：${statePath} 不存在。按 n 创建第一位 Main Bot。`
@@ -116,6 +120,7 @@ export function TeamScene(props) {
   const [mode, setMode] = React.useState('list')
   const [draft, setDraft] = React.useState('')
   const [pendingDelete, setPendingDelete] = React.useState(undefined)
+  const [approveIndex, setApproveIndex] = React.useState(0)
   const [, rerender] = React.useReducer((n) => n + 1, 0)
   const { columns, rows } = useTerminalSize()
 
@@ -249,6 +254,34 @@ export function TeamScene(props) {
     }
   }
 
+  const approve = async (capability) => {
+    const rt = runtime()
+    if (rt?.capabilityEndpoint === undefined) {
+      setNotice('无法授权：DS Bot 运行时未就绪')
+      return
+    }
+    setBusy(true)
+    setNotice('')
+    try {
+      await rt.load?.()
+      await rt.capabilityEndpoint('capability-approve', { name: capability.name })
+      // Mount it now for every Bot that already has it attached, so the next
+      // turn sees the tools without a restart.
+      for (const bot of team.bots) {
+        if (bot.capabilities.includes(capability.name)) {
+          await rt.ensureCapabilities?.(bot.sessionId).catch(() => {})
+        }
+      }
+      setTeam(readTeam())
+      setMode('list')
+      setNotice(`已授权 ${capability.name}，下次对话就会挂载。`)
+    } catch (error) {
+      setNotice(`授权失败：${error?.message ?? error}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const createChief = async () => {
     if (busy) return
     if (count > 0) {
@@ -306,6 +339,25 @@ export function TeamScene(props) {
   }
 
   useInput((input, key) => {
+    if (mode === 'approve') {
+      if (key.escape) {
+        setMode('list')
+        setNotice('')
+        return
+      }
+      if (key.upArrow || input === 'k') {
+        setApproveIndex((at) => Math.max(0, at - 1))
+        return
+      }
+      if (key.downArrow || input === 'j') {
+        setApproveIndex((at) => Math.min(team.pending.length - 1, at + 1))
+        return
+      }
+      if (key.return && team.pending[approveIndex] !== undefined) {
+        void approve(team.pending[approveIndex])
+      }
+      return
+    }
     if (mode !== 'list') {
       if (key.escape) {
         setMode('list')
@@ -366,6 +418,16 @@ export function TeamScene(props) {
       setNotice('')
       return
     }
+    if (input === 'p') {
+      if (team.pending.length === 0) {
+        setNotice('没有待授权的 MCP 能力。')
+        return
+      }
+      setApproveIndex(0)
+      setMode('approve')
+      setNotice('')
+      return
+    }
     if (input === 'c') {
       setMode('create')
       setDraft('')
@@ -402,6 +464,7 @@ export function TeamScene(props) {
       working > 0 ? h(Text, { color: 'accent' }, ` · 工作 ${working}`) : null,
       waiting > 0 ? h(Text, { color: 'warning' }, ` · 待回答 ${waiting}`) : null,
       unread > 0 ? h(Text, { color: 'success' }, ` · 未读 ${unread}`) : null,
+      team.pending.length > 0 ? h(Text, { color: 'warning' }, ` · 待授权 ${team.pending.length}`) : null,
       here === undefined ? null : h(Text, { color: 'success' }, ` · 当前 ${here.name}`),
       columns >= 96 ? h(Text, { color: 'inactive' }, `   ${channel.provider}/${channel.model}`) : null,
     ),
@@ -441,12 +504,25 @@ export function TeamScene(props) {
       : null,
   )
 
-  const footer = mode === 'list'
+  const approveView = mode !== 'approve' ? null : h(Box, { key: 'approve', flexDirection: 'column', marginTop: 1 },
+    h(Text, { color: 'accent' }, '待授权的 MCP 能力（Enter 批准，Esc 返回）'),
+    ...team.pending.map((item, at) => h(Box, { key: item.name, flexDirection: 'row' },
+      h(Text, { color: at === approveIndex ? 'accent' : 'subtle' }, at === approveIndex ? ' ❯ ' : '   '),
+      h(Text, { bold: at === approveIndex, color: at === approveIndex ? 'accent' : 'text' }, pad(item.name, 16)),
+      h(Text, { color: 'subtle' }, item.description),
+    )),
+    notice === '' ? null : h(Text, { color: 'warning' }, notice),
+    h(Text, { color: 'inactive' }, '批准后会立即挂载给已绑定它的 Bot；首次启动 MCP 可能慢几秒。'),
+  )
+
+  const footer = mode === 'approve'
+    ? approveView
+    : mode === 'list'
     ? h(Box, { key: 'footer', flexDirection: 'column', marginTop: 1 },
       busy ? h(Text, { color: 'accent' }, '处理中…') : null,
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
       h(Text, { color: 'subtle' }, '↑↓ 选择 · Enter 聊天 · m 发消息 · r 刷新'),
-      h(Text, { color: 'subtle' }, 'c 新建 · s 停止 · x 删除 · q 返回'),
+      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · q 返回${team.pending.length > 0 ? ' · p 授权' : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
     : h(Box, { key: 'footer', flexDirection: 'column', marginTop: 1 },
