@@ -76,6 +76,21 @@ export function readTeam() {
   return team
 }
 
+/** Session -> pid claims, as dsh-tui publishes them next to its settings. */
+function readMounts() {
+  try {
+    const parsed = JSON.parse(readFileSync(join(homedir(), '.dsh-tui', 'session-mounts.json'), 'utf8'))
+    const claims = new Map()
+    for (const owner of parsed.owners ?? []) {
+      const pid = Number(owner.pid)
+      for (const id of owner.sessionIds ?? []) claims.set(String(id), pid)
+    }
+    return claims
+  } catch {
+    return new Map()
+  }
+}
+
 function alive(pid) {
   try {
     process.kill(pid, 0)
@@ -150,6 +165,12 @@ export function TeamScene(props) {
   const unread = bots.reduce((total, bot) => total + bot.unread, 0)
   const current = count === 0 ? undefined : bots[Math.min(index, count - 1)]
   const here = bots.find((bot) => bot.sessionId === channel.sessionId)
+  const mounts = readMounts()
+  const holderOf = (bot) => mounts.get(String(bot.sessionId))
+  const foreignOf = (bot) => {
+    const pid = holderOf(bot)
+    return pid !== undefined && pid !== process.pid && alive(pid) ? pid : undefined
+  }
   const listHeight = Math.max(1, Math.min(count, rows - 11))
   const offset = Math.max(0, Math.min(index - listHeight + 1, count - listHeight))
 
@@ -495,7 +516,9 @@ export function TeamScene(props) {
       h(Text, { bold: selected, color: selected ? 'accent' : 'text' }, pad(bot.name, 13)),
       h(Text, { color: 'subtle' }, pad(bot.role || '—', 16)),
       h(Text, { color: status.color }, pad(status.text, 10)),
-      bot.sessionId === channel.sessionId ? h(Text, { color: 'success' }, ' 当前') : bot.unread > 0 ? h(Text, { color: 'success' }, ' ●新') : null,
+      bot.sessionId === channel.sessionId ? h(Text, { color: 'success' }, ' 当前')
+        : foreignOf(bot) !== undefined ? h(Text, { color: 'warning' }, ` 他窗:${foreignOf(bot)}`)
+          : bot.unread > 0 ? h(Text, { color: 'success' }, ' ●新') : null,
       bot.blocked === undefined ? null : h(Text, { color: 'error' }, ` ${bot.blocked}`),
       bot.waiting ? h(Text, { color: 'warning' }, ' 待开场') : null,
     ))
@@ -509,6 +532,9 @@ export function TeamScene(props) {
       current.model === '' ? null : h(Text, { color: 'inactive' }, ` · ${current.model}`),
       current.workDir === '' ? null : h(Text, { color: 'inactive' }, ` · ${current.workDir}`),
     ),
+    foreignOf(current) === undefined
+      ? null
+      : h(Text, { color: 'warning' }, `占用：pid ${foreignOf(current)}（另一个 TUI 窗口）`),
     current.live?.lastText
       ? h(Text, { color: 'subtle' }, `最近：${current.live.lastText}`)
       : null,
