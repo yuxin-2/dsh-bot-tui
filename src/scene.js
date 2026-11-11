@@ -215,6 +215,7 @@ export function TeamScene(props) {
     if (name === '') throw new Error('名字不能为空')
     const role = rest.join(',').trim().slice(0, 24)
     const model = await pickModel(rt)
+    await ensureWritable(rt)
     const created = await rt.createBot({ name, role, ...(model === undefined ? {} : { model }) })
     const next = readTeam()
     setTeam(next)
@@ -244,6 +245,7 @@ export function TeamScene(props) {
       return
     }
     try {
+      await ensureWritable(rt)
       await rt.deleteBot(bot.id)
       setNotice(`已删除 ${bot.name}`)
       setPendingDelete(undefined)
@@ -251,6 +253,14 @@ export function TeamScene(props) {
     } catch (error) {
       setNotice(`删除失败：${error?.message ?? error}`)
       setPendingDelete(undefined)
+    }
+  }
+
+  const ensureWritable = async (rt) => {
+    await rt.load?.()
+    await rt.refresh?.()
+    if (typeof rt.readOnly === 'function' && rt.readOnly() !== undefined) {
+      throw new Error(rt.readOnly())
     }
   }
 
@@ -263,7 +273,7 @@ export function TeamScene(props) {
     setBusy(true)
     setNotice('')
     try {
-      await rt.load?.()
+      await ensureWritable(rt)
       await rt.capabilityEndpoint('capability-approve', { name: capability.name })
       // Mount it now for every Bot that already has it attached, so the next
       // turn sees the tools without a restart.
@@ -296,7 +306,7 @@ export function TeamScene(props) {
     setBusy(true)
     setNotice('')
     try {
-      await rt.load?.()
+      await ensureWritable(rt)
       await rt.syncModels?.()
       const model = await pickModel(rt)
       await rt.createBot({
