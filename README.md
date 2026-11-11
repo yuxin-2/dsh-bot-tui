@@ -28,8 +28,12 @@ third-party plugin that consumes dsh-TUI's public plugin seams:
 
 There is deliberately **no chat renderer here**. Entering a Bot calls
 `channel.resumeTo()` and hands the terminal back to dsh-TUI's own Chat screen:
-whatever you type, and however it is drawn, is stock dsh-TUI. The scene is only
-a roster.
+whatever you type is composed by dsh-TUI. The scene is only a roster.
+
+The transcript *chrome* is the one thing this repo does tune: see
+[Terminal rendering](#terminal-rendering) for the four-file dsh-TUI patch that
+drops the leading `⏺`/`⎿` glyphs and gives fenced code an accent frame. It is
+optional — on stock dsh-TUI the plugin works unchanged.
 
 The same rule applies to dsh-TUI's React contract: the scene uses the injected
 `React` and `ui` kit from `TuiSceneProps`, so it runs on dsh-TUI's own React 19
@@ -158,6 +162,44 @@ API keeps working in-process.
 - **With the patch:** the terminal can create the first Main Bot.
 - Upstream PR pending. If you prefer no local patch, wait for the service to
   land, or carry the patch with `patch-package`.
+
+## Terminal rendering
+
+`patches/dsh-tui-transcript.patch` is a focused patch against dsh-TUI 0.19.0.
+It changes four files and nothing else:
+
+- **assistant rows** lose the big leading `⏺` marker; the two-column gutter stays
+- **tool-result rows** lose the `⎿` corner glyph (plain indentation instead)
+- **tool status** keeps the error `✗`, but no longer paints a dot for running or
+  settled calls
+- **code fences** get an accent-colored frame/rail and a tinted body, and the
+  hybrid frame engine is the default so the rail continues across wrapped code
+  lines
+
+```bash
+cd dsh-TUI
+git apply /path/to/dsh-bot-tui/patches/dsh-tui-transcript.patch
+git submodule update --init --recursive
+pnpm install --frozen-lockfile
+pnpm compile
+```
+
+Then point the profile at that build: keep the installed package's
+`node_modules` (it carries dsh-TUI's own React/marked/vendor deps) and replace
+only the checked-in files. The local install used by this repo did:
+
+```bash
+P=~/.dsh/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui
+mv "$P" "$P.orig"
+cp -R /path/to/dsh-TUI "$P"          # lib/, assets/, presets/, tui-profile/, …
+mv "$P.orig/node_modules" "$P/node_modules"
+```
+
+Roll back with `mv "$P.orig" "$P"`. Re-running `pnpm install` in the profile
+restores the published package too.
+
+The patch is MIT-licensed dsh-TUI source; it is not copied into this
+repository, only carried as a diff.
 
 ## How it works
 

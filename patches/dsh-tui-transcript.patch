@@ -1,0 +1,136 @@
+diff --git a/src/components/CodeBlockFrame.tsx b/src/components/CodeBlockFrame.tsx
+index 0dfc0c3e..3ae1ba51 100644
+--- a/src/components/CodeBlockFrame.tsx
++++ b/src/components/CodeBlockFrame.tsx
+@@ -54,7 +54,7 @@ const BODY_DECORATION: TextDecoration = {
+  * `DSH_TUI_CODE_FRAME=hybrid` selects the component layout.
+  */
+ export function codeFrameEngine(): 'typed' | 'hybrid' {
+-  return process.env.DSH_TUI_CODE_FRAME === 'hybrid' ? 'hybrid' : 'typed'
++  return process.env.DSH_TUI_CODE_FRAME === 'typed' ? 'typed' : 'hybrid'
+ }
+ 
+ type Props = {
+@@ -76,7 +76,7 @@ export function CodeBlockFrame({ token, highlight, dimColor = false, forceWidth
+   const theme = getTheme(themeName)
+   // Theme values are raw color strings; the ink-level border props take the
+   // Color type directly (NoSelect is not theme-aware like ThemedBox).
+-  const subtle = theme.subtle as Color
++  const subtle = theme.accent as Color
+   const width = Math.max(0, forceWidth ?? columns)
+   const contentWidth = width - SAFETY_MARGIN
+   const label = codeLanguageTag(token) || 'code'
+@@ -89,11 +89,11 @@ export function CodeBlockFrame({ token, highlight, dimColor = false, forceWidth
+     // label stays tight (`┌─ ts`), matching the hybrid header's noSelect
+     // columns.
+     const wide = contentWidth >= WIDE_HEADER_MIN_COLUMNS
+-    return colorize('┌─ ' + label + (wide ? ' ' : ''), theme.subtle, 'foreground')
++    return colorize('┌─ ' + label + (wide ? ' ' : ''), theme.accent, 'foreground')
+   }, [label, theme.subtle, contentWidth])
+   const headerFill = React.useMemo(() => {
+     if (contentWidth < WIDE_HEADER_MIN_COLUMNS) return undefined
+-    return colorize('─', theme.subtle, 'foreground')
++    return colorize('─', theme.accent, 'foreground')
+   }, [theme.subtle, contentWidth])
+   // Keyed on emptiness, not the body: a streaming fence keeps one
+   // decoration object while its text grows.
+@@ -108,7 +108,7 @@ export function CodeBlockFrame({ token, highlight, dimColor = false, forceWidth
+       headerFill,
+       prefix: {
+         // Hard rows retain their inset; continuations copy only source text.
+-        text: colorize('│', theme.subtle, 'foreground') + ' ',
++        text: colorize('│', theme.accent, 'foreground') + ' ',
+         width: FRAME_OVERHEAD,
+         noSelect: 1,
+         continuationNoSelect: FRAME_OVERHEAD,
+@@ -153,7 +153,7 @@ export function CodeBlockFrame({ token, highlight, dimColor = false, forceWidth
+ 
+   // Typed engine: one ink-text leaf whose paint carries the frame.
+   return (
+-    <Text dimColor={dimColor} decoration={decoration}>{body}</Text>
++    <Text dimColor={dimColor} decoration={decoration} backgroundColor="toolCardBackgroundDim">{body}</Text>
+   )
+ }
+ 
+@@ -218,7 +218,7 @@ function CodeBlockFrameFull({
+           borderColor={subtle}
+         />
+         <Box paddingRight={1} flexGrow={1} flexBasis={0}>
+-          <Text dimColor={dimColor} decoration={BODY_DECORATION}>{body}</Text>
++          <Text dimColor={dimColor} decoration={BODY_DECORATION} backgroundColor="toolCardBackgroundDim">{body}</Text>
+         </Box>
+       </Box>
+       <NoSelect
+@@ -281,7 +281,7 @@ function CodeBlockFrameHybrid({
+           borderColor={subtle}
+         />
+         <Box flexGrow={1} flexBasis={0}>
+-          <Text dimColor={dimColor} decoration={BODY_DECORATION}>{body}</Text>
++          <Text dimColor={dimColor} decoration={BODY_DECORATION} backgroundColor="toolCardBackgroundDim">{body}</Text>
+         </Box>
+       </Box>
+     </Box>
+diff --git a/src/components/ToolUseLoader.tsx b/src/components/ToolUseLoader.tsx
+index c4124a4d..897f506a 100644
+--- a/src/components/ToolUseLoader.tsx
++++ b/src/components/ToolUseLoader.tsx
+@@ -2,7 +2,7 @@ import React from 'react'
+ import Box from '../ink/components/Box.js'
+ import { Text } from '../ui.js'
+ import { useBlink } from '../hooks/useBlink.js'
+-import { BLACK_CIRCLE, BULLET, MULTIPLICATION_X } from '../terminal-utils/figures.js'
++import { MULTIPLICATION_X } from '../terminal-utils/figures.js'
+ import type { Theme } from '../theme.js'
+ 
+ type Props = {
+@@ -59,7 +59,7 @@ export function ToolUseLoader({
+   shouldAnimate,
+   toolName,
+ }: Props): React.ReactNode {
+-  const [ref, isBlinking] = useBlink(shouldAnimate)
++  const [ref] = useBlink(shouldAnimate)
+   if (isError) {
+     return (
+       <Box ref={ref} minWidth={2}>
+@@ -69,7 +69,7 @@ export function ToolUseLoader({
+   }
+   const category = CATEGORY_BY_TOOL[toolName ?? ''] ?? 'default'
+   const color = isUnresolved ? undefined : CATEGORY_TOKEN[category]
+-  const char = shouldAnimate ? (isBlinking ? BLACK_CIRCLE : ' ') : BULLET
++  const char = ' '
+ 
+   return (
+     <Box ref={ref} minWidth={2}>
+diff --git a/src/components/messages/AssistantTextMessage.tsx b/src/components/messages/AssistantTextMessage.tsx
+index f156fc06..1b265de9 100644
+--- a/src/components/messages/AssistantTextMessage.tsx
++++ b/src/components/messages/AssistantTextMessage.tsx
+@@ -1,6 +1,5 @@
+ import React from 'react'
+ import { Box, NoSelect, Text } from '../../ui.js'
+-import { BLACK_CIRCLE } from '../../terminal-utils/figures.js'
+ import { Markdown } from '../Markdown.js'
+ 
+ type Props = {
+@@ -43,7 +42,7 @@ export function AssistantTextMessage({
+     >
+       <Box flexDirection="row">
+         <NoSelect fromLeftEdge minWidth={2}>
+-          <Text color={isSelected ? 'suggestion' : 'text'}>{BLACK_CIRCLE}</Text>
++          <Text> </Text>
+         </NoSelect>
+         <Box flexDirection="column">
+           <Markdown>{text}</Markdown>
+diff --git a/src/components/messages/AssistantToolUseMessage.tsx b/src/components/messages/AssistantToolUseMessage.tsx
+index 1ba2b8bc..dbd60e4d 100644
+--- a/src/components/messages/AssistantToolUseMessage.tsx
++++ b/src/components/messages/AssistantToolUseMessage.tsx
+@@ -263,7 +263,7 @@ const SPLIT_DIFF_MIN_COLS = 110
+  *  it is showing — the source itself keeps every line. */
+ const VERBOSE_BODY_WINDOW = 400
+ 
+-const GUTTER_FIRST = ' ⎿ '
++const GUTTER_FIRST = '   '
+ const GUTTER_REST = '   '
+ 
+ const add = (text: string): BodyLine => ({ text, tone: 'add' })

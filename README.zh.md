@@ -26,8 +26,12 @@ dsh-TUI 的公开插件接缝：
 | `TuiSceneProps.channel` | 读 `channel.provider` / `channel.model` 用终端当前模型路由建 Bot；调 `channel.resumeTo(sessionId)` 打开 Bot 聊天 |
 
 这里**刻意没有聊天渲染层**：进入 Bot 后调用 `channel.resumeTo()`，把终端交还
-dsh-TUI 自己的 Chat 屏。你看到的历史、输入框、流式输出、卡片，全部是原版
-dsh-TUI；场景只负责列表。
+dsh-TUI 自己的 Chat 屏。你看到的历史、输入框、流式输出、卡片，全部由 dsh-TUI
+组装；场景只负责列表。
+
+唯一会调的是转录区的“外观”：见[终端渲染](#终端渲染)，一个四文件的 dsh-TUI
+补丁去掉行首的 `⏺`/`⎿` 符号、给代码块加强调边框。它是可选的——原版 dsh-TUI
+上插件照常工作。
 
 React 契约同样遵循 dsh-TUI：场景只用 `TuiSceneProps` 注入的 `React` 与 `ui`
 组件，跑在 dsh-TUI 自己的 React 19 reconciler 上，不引入第二份 React，也不碰
@@ -145,6 +149,39 @@ DS Bot 的 `apply()` 目前把运行时对象丢掉了，别的插件拿不到 `
 - **不打补丁**：`/bots` 列表和聊天照常，只是终端里不能建团队（`n` 不可用）。
 - **打补丁**：终端可以创建第一位 Main Bot。
 - 上游 PR 待提。不想带本地补丁，可以等这个服务合并，或用 `patch-package` 管理。
+
+## 终端渲染
+
+`patches/dsh-tui-transcript.patch` 是打在 dsh-TUI 0.19.0 上的定点补丁，只动四个
+文件：
+
+- **助手消息**去掉行首的大圆点 `⏺`，保留两列缩进
+- **工具结果**去掉 `⎿` 转角符号，改成空白缩进
+- **工具状态**保留错误 `✗`，但运行中/已结束不再画圆点
+- **代码块**换成主题强调色的边框/竖线 + 浅背景，并默认走 hybrid 引擎，折行后
+  竖线仍然连续
+
+```bash
+cd dsh-TUI
+git apply /path/to/dsh-bot-tui/patches/dsh-tui-transcript.patch
+git submodule update --init --recursive
+pnpm install --frozen-lockfile
+pnpm compile
+```
+
+然后把 profile 指向这份构建：保留已安装包的 `node_modules`（里面有 dsh-TUI
+自己的 React/marked/vendor 依赖），只替换代码文件。本机用的是：
+
+```bash
+P=~/.dsh/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui
+mv "$P" "$P.orig"
+cp -R /path/to/dsh-TUI "$P"
+mv "$P.orig/node_modules" "$P/node_modules"
+```
+
+回滚：`mv "$P.orig" "$P"`；在 profile 里重跑 `pnpm install` 也会装回官方版。
+
+补丁改的是 MIT 许可的 dsh-TUI 源码；本仓库只保存 diff，不复制其代码。
 
 ## 工作原理
 
