@@ -22,7 +22,10 @@ export const inject = ['commands', 'tuiScenes']
 const SCENE_ID = 'ds-bot-team'
 
 export function apply(ctx) {
-  bindRuntime(() => ctx.get('dsBot', false))
+  // `ctx.get(name, fallback)` returns the fallback when the service is absent;
+  // `false` is falsy but not undefined, and every "runtime not ready" check
+  // would miss it and then call a method on `false`.
+  bindRuntime(() => ctx.get('dsBot') ?? undefined)
   installActivity(ctx)
 
   const disposeScene = ctx.tuiScenes.register({

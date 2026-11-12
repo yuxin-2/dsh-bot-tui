@@ -22,13 +22,14 @@ third-party plugin that consumes dsh-TUI's public plugin seams:
 
 | dsh-TUI seam | What this plugin does with it |
 | --- | --- |
-| `ctx.tuiScenes.register()` | Registers the `ds-bot-team` full-screen roster (the `/bots` screen) |
+| `ctx.tuiScenes.register()` | Registers the `ds-bot-team` full-screen roster and its keyboard panels (settings, groups, approvals, schedules, memory) |
 | `ctx.commands.register()` | Registers the `/bots` slash command that opens it |
 | `TuiSceneProps.channel` | Reads `channel.provider` / `channel.model` to create a Bot on the terminal's live route, and calls `channel.resumeTo(sessionId)` to open a Bot's chat |
 
 There is deliberately **no chat renderer here**. Entering a Bot calls
 `channel.resumeTo()` and hands the terminal back to dsh-TUI's own Chat screen:
-whatever you type is composed by dsh-TUI. The scene is only a roster.
+whatever you type is composed by dsh-TUI. The scene owns the roster and its
+keyboard panels; it never renders a transcript.
 
 The transcript *chrome* is the one thing this repo does tune: see
 [Terminal rendering](#terminal-rendering) for the four-file dsh-TUI patch that
@@ -124,15 +125,46 @@ dsh --profile dsh-tui
 
 ```
 ↑/↓      move                      Enter   open that Bot's chat
-m        message without leaving    c      create a Bot (name,role)
+m        message without leaving    c      create a Bot (name,role,brief)
 s        stop that Bot's turn       x      delete (press twice)
 n        create Chief (empty team)  r      re-read state.json
-q / Esc  back to the chat
+/        search name or label       t      group chats
+e        edit this Bot's settings   a      answer pending approvals
+p        approve pending MCPs       v      mount/unmount capabilities
+u        release this terminal's claim
+y        token usage for this Bot   o      Computer panel
+q/Esc  back to the chat
 ```
+
+`e` opens the Bot's settings as a keyboard form: name, label, avatar (shape or a
+local image path), color, effort, permissions, instructions, model, working folder,
+private/pinned/hidden, Main Bot, section, Computer access, memory, schedules,
+duplicate, and delete. The model row lists every catalog entry and marks the one
+that needs a key; the effort row lists the model's thinking levels; the permission
+row lists the presets DSH offers (full access in red); the section
+row moves the Bot between sidebar groups (`n` creates a new one); the Computer row
+sets the Bot's access level (off/view/background/foreground); the Browser row
+lists per-site grants (`n` adds one, `x` revokes the selected one). `t` lists
+group chats: create one from a Bot checklist, open it, rename it, change members,
+admin, reply mode, permission, folder, section, notice, memory, or schedules, and
+delete it. `a`
+answers DS Bot's pending approvals (`Enter` allow, `x` reject). `y` sums the
+usage ledger by Bot; `d`/`w`/`m` narrow it to a day, a week or a month. `o` opens
+the Computer panel: the global switch, provider retry, each Bot's level, and the
+app grants that can be revoked.
+
+The memory panel (`e` → Memory) is a two-way editor: `a` asks the keeper Bot to
+add, edit or remove entries in plain language, `p` pins or unpins the selected
+entry, `l` moves it between the Bot's own memory and the team's shared memory,
+`m` moves the selected entry to another Bot, group or the team memory, `t` undoes
+the last tidy, and `x` forgets it. `h` opens the change log; `Enter` restores a
+change, `n` loads older rows. Schedules support daily, weekly (pick days 1–7),
+repeat-every, and one-shot times.
 
 Rows show live state: `工作中 Ns` (a turn is running), `待回答` (a card is
 waiting for you), `空闲`, `●新` (a reply arrived since you last opened it), and
-`当前` for the Bot whose chat the terminal is on.
+`当前` for the Bot whose chat the terminal is on. `/` filters the roster by name
+or label; `Esc` clears the filter before it leaves the scene.
 
 On an empty team, `n` creates the first Main Bot, **Chief**, on a model route
 this terminal can actually reach, and saves it. Chief's greeting runs as a
@@ -233,8 +265,31 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
   `$DSH_HOME/bot`. While another host holds the lock, the TUI host goes
   read-only: the roster shows a warning and turns may not persist. Close the
   other app first.
-- **No dedicated screens** for groups, approvals, memory or model management.
-  Those flows stay inside Bot chat and the cards Bots render.
+- **One terminal per session.** A TUI process keeps its session claims until
+  it exits. Closing the outer window inside tmux/byobu does not exit
+  `dsh-tui`, so the session stays occupied and a new window is refused with
+  "mounted by another TUI terminal (pid …)". Exit that process (Ctrl+D) or
+  `kill <pid>`; in the roster, `u` releases a background session this terminal
+  still holds, and a Bot held elsewhere shows `他窗:<pid>`.
+- **Group, approval and memory screens are keyboard-driven.** They cover
+  create/open/edit/delete for groups, allow/reject for approvals, and
+  view/forget for memory; the browser's drag-and-drop member cards, approval
+  history and memory ask/edit/tidy tools are not reproduced.
+- **The settings form is keyboard-first.** It covers profile, avatar (a shape or
+  a local image path), color, effort, permissions, instructions, model, folder,
+  privacy, pin/hide, Main Bot, section, Computer access, browser grants, memory,
+  schedules, duplicate and delete. The Computer panel (`o`) toggles the global switch,
+  retries the provider, and revokes app grants; browser grants can also be added by hand
+  (site plus post/upload/download/delete/*). Permission presets come from DSH's
+  `permissionPresets` service; without it the row shows the default and Enter
+  reports that no presets are available.
+- **Group management is a checklist.** Creating or editing members uses a Bot
+  checklist (2–12 members); the browser's drag-and-drop and per-member cards are
+  not reproduced. Group settings also cover permission, section, notice, memory and
+  schedules.
+- **Memory is ask, pin, layer, move and forget.** The panel also undoes the last
+  tidy and restores rows from the change log. The browser's separate tidy queue and
+  per-entry editor are not reproduced; those run on their own inside DS Bot.
 - **`page()` is a stub** returning an empty page: handoff notes and memory
   read-back degrade; ordinary chat is unaffected.
 - **The patch above** is required for creating a team from the terminal.
@@ -246,7 +301,7 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
 ```bash
 node --check src/index.js src/scene.js src/controller.js src/connection.js
 dsh --profile dsh-tui          # boot check: no "did not activate" warnings
-/bots                          # smoke: roster renders, Enter opens a chat
+/bots                          # smoke: roster, e settings, t groups, a approvals
 ```
 
 After editing DS Bot's host code, refresh the profile's `file:` copy:
