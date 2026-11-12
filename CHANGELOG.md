@@ -3,6 +3,13 @@
 只记录真实版本号与已经落地的能力。0.10.0–0.13.0 是开发过程中的工作区版本号；
 0.13.0 是首次把完整工作区提交、并对齐 `package.json` 的版本。
 
+## 0.27.0
+
+- 名册按 `I` 打开只读健康检查面板：DS Bot 运行时是否就绪、团队锁是否被其它宿主占用、其它终端占用的会话数（pid 与起始时间）、dsh-TUI 版本与插件兼容范围、dsBot 补丁是否应用、名册监听是否可用。
+- 每项都给出可操作建议；读不到或无法判断时明确写「不确定」，不自动修复。
+- 团队锁状态来自 `rt.readOnly()` 与 `$DSH_HOME/bot/state.lock`；会话占用来自 `~/.dsh-tui/session-mounts.json`；dsh-TUI 版本从已安装的 `@deepseek-harness-tui/dsh-tui/package.json` 读取；补丁状态看 `dsBot` 服务是否存在；监听状态由 `watchTeam()` 上报。
+- 新增 `test/probes/health.tsx`，覆盖全部正常、锁被占、会话被占、缺服务四种情况。
+
 ## 0.26.0
 
 - 定时面板显示下次触发时间与最近投递时间：分别来自 DS Bot `schedules` 端点里的 `scheduledAt` 与 `lastDelivery.deliveredAt`。

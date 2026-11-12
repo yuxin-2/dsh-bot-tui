@@ -9,9 +9,10 @@
 // Chat is the ordinary dsh-TUI Chat screen: Enter resumes the Bot's own Session,
 // so the Bot's persona, memory and team tools apply to the turn DSH runs there.
 // A message sent with `m` goes to the Bot without leaving the roster.
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { activityOf, clearFailure, markSeen, subscribe, unreadOf } from './activity.js'
 import { approvalHistory, recordApproval, subscribeApprovalHistory } from './approvalHistory.js'
 import { readCollapsed, writeCollapsed } from './collapse.js'
@@ -22,6 +23,11 @@ const MAIN_MARK = '★'
 // 50; the panel is a narrow column, so 20 is already more than it can show at
 // once and keeps each read small.
 const HISTORY_PAGE = 20
+
+// The dsh-TUI line this plugin is written and verified against (README status).
+// The health panel reports the installed version next to this declared range.
+const TUI_PACKAGE = '@deepseek-harness-tui/dsh-tui'
+const TUI_COMPAT_RANGE = '0.19.x'
 
 // The browser's avatar shape set and Bot palette (DS Bot client), copied here so
 // the settings form does not reach into the DS Bot bundle's private modules.
@@ -69,7 +75,7 @@ export const HELP_SECTIONS = [
       ['u', '释放本终端对该会话的占用'],
       ['n', '空团队时创建 Chief'],
       ['r', '重读 state.json'],
-      ['?', '打开 / 关闭本帮助'],
+      ['I / ?', '健康检查（只读）· 打开 / 关闭帮助'],
       ['q / Esc', '返回聊天（先清除搜索）'],
     ],
   },
@@ -186,6 +192,7 @@ export const MODE_HINTS = {
   'avatar-path': 'Enter 使用 · Esc 取消',
   colors: '↑↓ 选择 · Enter 应用 · Esc 返回',
   usage: 'd 一天 · w 一周 · m 一月 · r 刷新 · Esc 返回',
+  health: '只读采集 · Esc 返回',
   approve: '↑↓ 选择 · Enter 批准 · Esc 返回',
   capabilities: '↑↓ 选择 · Enter 挂载/卸载 · Esc 返回',
   approvals: '↑↓ 选择 · Enter 允许 · x 拒绝 · h 历史 · Esc 返回',
@@ -331,6 +338,84 @@ function readMounts() {
   } catch {
     return new Map()
   }
+}
+
+/** Live foreign owners, with the start time dsh-tui records for diagnostics. */
+function readMountOwners() {
+  try {
+    const parsed = JSON.parse(readFileSync(join(homedir(), '.dsh-tui', 'session-mounts.json'), 'utf8'))
+    const owners = []
+    const claimed = new Set()
+    for (const owner of parsed.owners ?? []) {
+      const pid = Number(owner.pid)
+      if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid || !alive(pid)) continue
+      const sessionIds = []
+      for (const id of Array.isArray(owner.sessionIds) ? owner.sessionIds : []) {
+        if (typeof id !== 'string' || id === '' || claimed.has(id)) continue
+        claimed.add(id)
+        sessionIds.push(id)
+      }
+      if (sessionIds.length === 0) continue
+      const startedAt = Number(owner.startedAt)
+      owners.push({ pid, startedAt: Number.isFinite(startedAt) ? startedAt : undefined, sessionIds })
+    }
+    return owners
+  } catch {
+    return []
+  }
+}
+
+function packageVersion(file) {
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    if (parsed?.name === TUI_PACKAGE && typeof parsed.version === 'string' && parsed.version !== '') return parsed.version
+  } catch {
+    // Not a readable package manifest.
+  }
+  return undefined
+}
+
+let tuiVersionCache
+function readTuiVersion() {
+  if (tuiVersionCache !== undefined) return tuiVersionCache
+  const candidates = []
+  const here = dirname(fileURLToPath(import.meta.url))
+  // This checkout's sibling, used by the probes and local development.
+  candidates.push(resolve(here, '..', '..', 'dsh-TUI', 'package.json'))
+  const starts = [here, process.cwd()]
+  if (typeof process.argv[1] === 'string' && process.argv[1] !== '') starts.push(dirname(resolve(process.argv[1])))
+  for (const start of starts) {
+    let dir = resolve(start)
+    for (let at = 0; at < 12; at += 1) {
+      candidates.push(join(dir, 'package.json'))
+      candidates.push(join(dir, 'node_modules', TUI_PACKAGE, 'package.json'))
+      const parent = dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  }
+  for (const root of [join(dshHome(), 'profiles'), join(homedir(), '.dsh', 'profiles')]) {
+    try {
+      for (const name of readdirSync(root)) candidates.push(join(root, name, 'node_modules', TUI_PACKAGE, 'package.json'))
+    } catch {
+      // No profile directory here.
+    }
+  }
+  for (const file of candidates) {
+    const version = packageVersion(file)
+    if (version !== undefined) {
+      tuiVersionCache = { version, file }
+      return tuiVersionCache
+    }
+  }
+  tuiVersionCache = null
+  return null
+}
+
+function tuiCompat(version) {
+  const match = /^(\d+)\.(\d+)\./.exec(String(version ?? ''))
+  if (match === null) return undefined
+  return Number(match[1]) === 0 && Number(match[2]) === 19
 }
 
 function alive(pid) {
@@ -509,6 +594,7 @@ export function TeamScene(props) {
   const [memoryHistoryBusy, setMemoryHistoryBusy] = React.useState(false)
   const [memoryEditEntry, setMemoryEditEntry] = React.useState(undefined)
   const [stopAllPending, setStopAllPending] = React.useState(false)
+  const [watchMode, setWatchMode] = React.useState('starting')
   const [pendingForget, setPendingForget] = React.useState(undefined)
   const [pendingForgetAt, setPendingForgetAt] = React.useState(0)
   const [approvalHistoryOpen, setApprovalHistoryOpen] = React.useState(false)
@@ -518,7 +604,10 @@ export function TeamScene(props) {
   React.useEffect(() => {
     // Directory watch, not a per-second poll: DS Bot swaps state.json in with a
     // rename, so the directory is the durable thing to watch (see watch.js).
-    const watcher = watchTeam(() => setTeam(readTeam()), { home: join(dshHome(), 'bot') })
+    const watcher = watchTeam(() => setTeam(readTeam()), {
+      home: join(dshHome(), 'bot'),
+      onStatus: (status) => setWatchMode(status.mode),
+    })
     return () => watcher.close()
   }, [])
   React.useEffect(() => subscribe(rerender), [])
@@ -3515,6 +3604,13 @@ export function TeamScene(props) {
       }
       return
     }
+    if (mode === 'health') {
+      if (key.escape || input === 'q' || input === 'I') {
+        setMode('list')
+        setNotice('')
+      }
+      return
+    }
     if (mode === 'search') {
       if (key.escape) {
         setSearch('')
@@ -3625,6 +3721,11 @@ export function TeamScene(props) {
     if (input === '?') {
       setHelpAt(0)
       setMode('help')
+      setNotice('')
+      return
+    }
+    if (input === 'I') {
+      setMode('health')
       setNotice('')
       return
     }
@@ -4194,6 +4295,149 @@ export function TeamScene(props) {
     return at === undefined ? '最近投递 不可用' : `最近投递 ${at}`
   }
   const scheduleStatusText = (task) => [scheduleNextText(task), scheduleDeliveryText(task), '执行结果 不可用'].join(' · ')
+  const healthItems = mode !== 'health' ? [] : (() => {
+    const rt = runtime()
+    const healthTeam = readTeam()
+    let readOnly
+    let readOnlyKnown = false
+    if (typeof rt?.readOnly === 'function') {
+      readOnlyKnown = true
+      try {
+        readOnly = rt.readOnly()
+      } catch {
+        readOnly = '读取只读状态失败'
+      }
+    }
+    const foreignOwners = readMountOwners()
+    const foreignSessions = foreignOwners.reduce((total, owner) => total + owner.sessionIds.length, 0)
+    const tui = readTuiVersion()
+    const compat = tui === null ? undefined : tuiCompat(tui.version)
+    const items = []
+
+    if (rt === undefined) {
+      items.push({
+        key: 'runtime', label: 'DS Bot 运行时', icon: '✗', tone: 'bad',
+        value: '未就绪（dsBot 服务不存在）',
+        advice: '检查 profile 的 bot 行与 patches/ds-bot-expose-runtime.patch；本面板只读，不会自动修复。',
+      })
+    } else if (typeof rt.load !== 'function') {
+      items.push({
+        key: 'runtime', label: 'DS Bot 运行时', icon: '!', tone: 'warn',
+        value: '部分就绪（缺少 load）',
+        advice: 'DS Bot 运行时版本可能不匹配；重新安装 ds-bot 并刷新 profile。',
+      })
+    } else {
+      items.push({
+        key: 'runtime', label: 'DS Bot 运行时', icon: '✓', tone: 'ok',
+        value: '已就绪',
+        advice: '无需操作。',
+      })
+    }
+
+    if (rt === undefined) {
+      items.push({
+        key: 'lock', label: '团队锁', icon: '?', tone: 'unknown',
+        value: healthTeam.foreign === undefined
+          ? '不确定（运行时未就绪）'
+          : `不确定 · state.lock pid ${healthTeam.foreign.pid}`,
+        advice: '先恢复 DS Bot 运行时，再查看 state.lock。',
+      })
+    } else if (!readOnlyKnown) {
+      items.push({
+        key: 'lock', label: '团队锁', icon: '?', tone: 'unknown',
+        value: '不确定（运行时没有只读接口）',
+        advice: '无法判断团队锁；确认 DS Bot 运行时版本后重试。',
+      })
+    } else if (readOnly !== undefined) {
+      items.push({
+        key: 'lock', label: '团队锁', icon: '✗', tone: 'bad',
+        value: healthTeam.foreign === undefined ? '被占用（只读）' : `被占用（只读）· pid ${healthTeam.foreign.pid}`,
+        detail: readOnly,
+        advice: '另一个 DS Bot 窗口持有团队锁，关闭它或退出该进程。',
+      })
+    } else if (healthTeam.foreign !== undefined) {
+      items.push({
+        key: 'lock', label: '团队锁', icon: '!', tone: 'warn',
+        value: `state.lock 显示 pid ${healthTeam.foreign.pid}，但运行时报告可写`,
+        advice: '锁可能已经释放；重读 state.json 或重启 TUI 后确认。',
+      })
+    } else {
+      items.push({
+        key: 'lock', label: '团队锁', icon: '✓', tone: 'ok',
+        value: '空闲（可写）',
+        advice: '无需操作。',
+      })
+    }
+
+    if (foreignSessions === 0) {
+      items.push({
+        key: 'mounts', label: '会话占用', icon: '✓', tone: 'ok',
+        value: '没有其它终端占用会话',
+        advice: '无需操作。',
+      })
+    } else {
+      items.push({
+        key: 'mounts', label: '会话占用', icon: '!', tone: 'warn',
+        value: `${foreignSessions} 个会话被其它终端占用`,
+        lines: foreignOwners.map((owner) => `pid ${owner.pid} · 起始 ${owner.startedAt === undefined ? '未知' : new Date(owner.startedAt).toLocaleString()} · ${owner.sessionIds.length} 个会话`),
+        advice: '这些终端仍在运行；在对应窗口退出，或在名册按 u 释放本终端的占用。',
+      })
+    }
+
+    if (tui === null) {
+      items.push({
+        key: 'tui', label: 'dsh-TUI 版本', icon: '?', tone: 'unknown',
+        value: `不确定（未找到 dsh-TUI package.json）· 兼容范围 ${TUI_COMPAT_RANGE}`,
+        advice: '确认 dsh-TUI 已安装在 dsh 的 profile 中，再重新打开本面板。',
+      })
+    } else {
+      items.push({
+        key: 'tui', label: 'dsh-TUI 版本', icon: compat === true ? '✓' : '!', tone: compat === true ? 'ok' : 'warn',
+        value: `${tui.version} · 兼容范围 ${TUI_COMPAT_RANGE}`,
+        advice: compat === true
+          ? '无需操作。'
+          : compat === false
+            ? '插件针对 0.19.x 验证；升级 dsh-TUI 前先检查场景与通道接缝。'
+            : '版本无法判断；按 README 的兼容范围核对。',
+      })
+    }
+
+    if (rt === undefined) {
+      items.push({
+        key: 'patch', label: '运行时补丁', icon: '✗', tone: 'bad',
+        value: '未应用（dsBot 服务不存在）',
+        advice: '给 DS-Bot 应用 patches/ds-bot-expose-runtime.patch，或检查 profile 的 bot 行。',
+      })
+    } else {
+      items.push({
+        key: 'patch', label: '运行时补丁', icon: '✓', tone: 'ok',
+        value: '已应用（dsBot 服务存在）',
+        advice: '无需操作。',
+      })
+    }
+
+    if (watchMode === 'watch') {
+      items.push({
+        key: 'watch', label: '名册监听', icon: '✓', tone: 'ok',
+        value: '可用（目录监听）',
+        advice: '无需操作。',
+      })
+    } else if (watchMode === 'polling') {
+      items.push({
+        key: 'watch', label: '名册监听', icon: '!', tone: 'warn',
+        value: '不可用（已退化为每 1.5 秒轮询）',
+        advice: '文件系统或同步目录不支持监听；名册仍会刷新，可忽略或换本地目录。',
+      })
+    } else {
+      items.push({
+        key: 'watch', label: '名册监听', icon: '?', tone: 'unknown',
+        value: '正在检测…',
+        advice: '稍等片刻即可。',
+      })
+    }
+    return items
+  })()
+
   const myScheduleList = mySchedules()
   const scheduleAt = Math.min(scheduleIndex, Math.max(0, myScheduleList.length - 1))
   const scheduleListHeight = Math.max(1, Math.min(myScheduleList.length, rows - 18))
@@ -4242,6 +4486,21 @@ export function TeamScene(props) {
       : `时间（${scheduleDraft.kind === 'at' ? 'YYYY-MM-DDTHH:MM' : scheduleDraft.kind === 'every' ? '分钟数' : 'HH:MM'}）`),
     h(Text, null, h(Text, { color: 'accent' }, ' ❯ '), h(Text, null, fieldDraft === '' ? ' ' : fieldDraft)),
     h(Text, { color: 'inactive' }, `目标：${scheduleTarget?.name ?? '?'} · ${scheduleDraft.title === '' ? '（未命名）' : scheduleDraft.title}`),
+  )
+
+  const healthColor = { ok: 'success', warn: 'warning', bad: 'error', unknown: 'subtle' }
+  const healthView = mode !== 'health' ? null : h(Box, { key: 'health', flexDirection: 'column', marginTop: 1 },
+    h(Text, { color: 'accent' }, '健康检查（只读采集 · Esc 返回）'),
+    ...healthItems.map((item) => h(Box, { key: item.key, flexDirection: 'column' },
+      h(Box, { flexDirection: 'row' },
+        h(Text, { color: healthColor[item.tone] }, `${item.icon} `),
+        h(Text, { bold: true, color: 'text' }, pad(item.label, 18)),
+        h(Text, { color: healthColor[item.tone] }, truncate(item.value, Math.max(8, columns - 26))),
+      ),
+      ...(item.lines ?? []).map((line, at) => h(Text, { key: `${item.key}-line-${at}`, color: 'inactive' }, `   ${truncate(line, Math.max(8, columns - 6))}`)),
+      item.detail === undefined ? null : h(Text, { color: 'inactive' }, `   ${truncate(item.detail, Math.max(8, columns - 6))}`),
+      h(Text, { color: 'inactive' }, `   建议：${truncate(item.advice, Math.max(8, columns - 8))}`),
+    )),
   )
 
   const avatarAt = Math.min(avatarIndex, AVATAR_SHAPES.length - 1)
@@ -4556,7 +4815,7 @@ export function TeamScene(props) {
     }),
   )
 
-  const fullViewNode = approveView ?? capView ?? helpView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryEditView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
+  const fullViewNode = approveView ?? capView ?? helpView ?? healthView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryEditView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
   const fullFooter = fullViewNode === null ? null : h(Box, { key: 'full-footer', flexDirection: 'column', marginTop: 1 },
     busy ? h(Text, { color: 'accent' }, '处理中…') : null,
     notice === '' ? null : h(Text, { color: 'warning' }, notice),
@@ -4580,7 +4839,7 @@ export function TeamScene(props) {
         : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
       h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · ←/→ 分组 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
-      h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
+      h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑 · I 体检${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
     : h(Box, { key: 'footer', flexDirection: 'column', marginTop: 1 },

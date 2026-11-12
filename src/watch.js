@@ -16,12 +16,22 @@ export function watchTeam(onChange, options = {}) {
     delay = 120,
     fallback = 1500,
     watchImpl = fsWatch,
+    onStatus,
   } = options
 
   let watcher
   let debounce
   let polling
   let closed = false
+
+  const report = (mode) => {
+    if (closed) return
+    try {
+      onStatus?.({ mode, fallback })
+    } catch {
+      // A status listener must not break the watcher.
+    }
+  }
 
   const read = () => {
     if (closed) return
@@ -59,9 +69,12 @@ export function watchTeam(onChange, options = {}) {
     watcher.on('error', () => {
       stopWatcher()
       startPolling()
+      report('polling')
     })
+    report('watch')
   } catch {
     startPolling()
+    report('polling')
   }
 
   return {

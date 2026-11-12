@@ -139,6 +139,7 @@ u        release this terminal's claim
 space    collapse/expand details
 ←/→      collapse/expand the selected group
 PgUp/PgDn  detail history (older/newer)
+I        health check (read-only)
 ?        help overlay
 y        token usage for this Bot   o      Computer panel
 q/Esc  back to the chat
