@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { activityOf, markSeen, subscribe, unreadOf } from './activity.js'
+import { approvalHistory, recordApproval, subscribeApprovalHistory } from './approvalHistory.js'
 import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
@@ -53,6 +54,7 @@ export const HELP_SECTIONS = [
       ['space', '折叠 / 展开详情'],
       ['/', '按名称或标签搜索'],
       ['a', '回答待审批的请求'],
+      ['a → h', '查看本终端已决审批'],
       ['p', '批准待授权的 MCP 能力'],
       ['v', '挂载 / 卸载当前 Bot 的能力'],
       ['u', '释放本终端对该会话的占用'],
@@ -176,7 +178,7 @@ export const MODE_HINTS = {
   usage: 'd 一天 · w 一周 · m 一月 · r 刷新 · Esc 返回',
   approve: '↑↓ 选择 · Enter 批准 · Esc 返回',
   capabilities: '↑↓ 选择 · Enter 挂载/卸载 · Esc 返回',
-  approvals: '↑↓ 选择 · Enter 允许 · x 拒绝 · Esc 返回',
+  approvals: '↑↓ 选择 · Enter 允许 · x 拒绝 · h 历史 · Esc 返回',
 }
 
 // Two modes carry state-dependent hints; everything else is a static line.
@@ -190,6 +192,9 @@ export function modeHint(mode, state = {}) {
     return state.scheduleStep === 4
       ? '1–7 切换 · Enter 保存 · Esc 取消'
       : MODE_HINTS['schedule-new']
+  }
+  if (mode === 'approvals' && state.approvalHistoryOpen === true) {
+    return 'h 返回待审批 · Esc 返回'
   }
   return MODE_HINTS[mode] ?? '↑↓ 选择 · Enter 确认 · Esc 返回'
 }
@@ -476,6 +481,7 @@ export function TeamScene(props) {
   const [memoryHistoryBusy, setMemoryHistoryBusy] = React.useState(false)
   const [pendingForget, setPendingForget] = React.useState(undefined)
   const [pendingForgetAt, setPendingForgetAt] = React.useState(0)
+  const [approvalHistoryOpen, setApprovalHistoryOpen] = React.useState(false)
   const [, rerender] = React.useReducer((n) => n + 1, 0)
   const { columns, rows } = useTerminalSize()
 
@@ -486,6 +492,27 @@ export function TeamScene(props) {
     return () => watcher.close()
   }, [])
   React.useEffect(() => subscribe(rerender), [])
+  React.useEffect(() => subscribeApprovalHistory(rerender), [])
+  React.useEffect(() => {
+    // DS Bot settles approvals inside its own runtime (the TUI answer, a race
+    // won by DSH's card, or a cancellation). Its `settled` event is the only
+    // notice; the pending map is already empty by then, so keep the open entry
+    // to name the request in the local history.
+    const rt = runtime()
+    if (typeof rt?.onApproval !== 'function') return
+    const open = new Map()
+    const off = rt.onApproval((kind, data) => {
+      if (kind === 'open') {
+        if (data?.id !== undefined) open.set(data.id, data)
+        return
+      }
+      if (kind !== 'settled' || data?.id === undefined) return
+      const entry = open.get(data.id) ?? {}
+      open.delete(data.id)
+      recordApproval({ ...entry, id: data.id, outcome: data.outcome, decidedAt: Date.now() })
+    })
+    return typeof off === 'function' ? off : undefined
+  }, [])
 
   const sectionOrder = new Map(team.sections.map((section, at) => [section.id, at]))
   const teamBots = team.bots
@@ -1802,6 +1829,21 @@ export function TeamScene(props) {
     }
     try {
       rt.answerApproval(entry.id, choice)
+      // Without DS Bot's `settled` event (older runtime, or a runtime that does
+      // not expose it) this terminal still knows what it just decided.
+      if (typeof rt.onApproval !== 'function') {
+        recordApproval({
+          id: entry.id,
+          sessionId: entry.sessionId,
+          botId: entry.botId,
+          roomId: entry.roomId,
+          tool: entry.tool,
+          reason: entry.reason,
+          at: entry.at,
+          outcome: choice === 'allow' ? 'allowed-once' : 'rejected',
+          decidedAt: Date.now(),
+        })
+      }
       rerender()
       setNotice(choice === 'allow' ? `已允许 ${entry.tool || '请求'}` : `已拒绝 ${entry.tool || '请求'}`)
     } catch (error) {
@@ -2730,7 +2772,13 @@ export function TeamScene(props) {
     if (mode === 'approvals') {
       if (key.escape || input === 'q') {
         setMode('list')
+        setApprovalHistoryOpen(false)
         setNotice('')
+        return
+      }
+      if (input === 'h') {
+        setApprovalHistoryOpen((open) => !open)
+        setApproveIndex(0)
         return
       }
       if (key.upArrow || input === 'k') {
@@ -2741,7 +2789,7 @@ export function TeamScene(props) {
         setApproveIndex((at) => Math.min(Math.max(0, approvals.length - 1), at + 1))
         return
       }
-      if (approvals.length > 0) {
+      if (approvals.length > 0 && !approvalHistoryOpen) {
         const entry = approvals[Math.min(approveIndex, approvals.length - 1)]
         if (key.return && !busy) answerApproval(entry, 'allow')
         else if (input === 'x' && !busy) answerApproval(entry, 'reject')
@@ -3171,6 +3219,7 @@ export function TeamScene(props) {
     }
     if (input === 'a') {
       setApproveIndex(0)
+      setApprovalHistoryOpen(false)
       setMode('approvals')
       setNotice('')
       return
@@ -3570,9 +3619,38 @@ export function TeamScene(props) {
   )
 
   const approvalsAt = Math.min(approveIndex, Math.max(0, approvals.length - 1))
+  const approvalOutcome = (outcome) => outcome === 'allowed-once'
+    ? '允许'
+    : outcome === 'rejected' ? '拒绝' : outcome === 'cancelled' ? '取消' : String(outcome ?? '已决')
+  const approvalTarget = (entry) => {
+    const name = entry.botId === undefined ? undefined : botName(entry.botId)
+    const where = name ?? (entry.sessionId === undefined || entry.sessionId === null
+      ? '?'
+      : truncate(String(entry.sessionId), 20))
+    return entry.roomId === undefined ? where : `${where} · 群聊`
+  }
+  const approvalHistoryList = approvalHistory()
+  const approvalHistoryRows = approvalHistoryList.slice(0, listHeight).map((entry) => {
+    const outcome = approvalOutcome(entry.outcome)
+    return h(Box, { key: entry.id, flexDirection: 'column' },
+      h(Box, { flexDirection: 'row' },
+        h(Text, { color: 'inactive' }, `${new Date(entry.decidedAt ?? entry.at ?? Date.now()).toLocaleString()}  `),
+        h(Text, { color: entry.outcome === 'allowed-once' ? 'success' : 'warning' }, pad(outcome, 6)),
+        h(Text, { color: 'text' }, `${approvalTarget(entry)}  `),
+        h(Text, { color: 'text' }, truncate(entry.tool || '请求', 18)),
+      ),
+      h(Text, { color: 'inactive' }, `   ${truncate(entry.reason || '没有说明', Math.max(8, columns - 6))}`),
+    )
+  })
   const approvalsView = mode !== 'approvals' ? null : h(Box, { key: 'approvals', flexDirection: 'column', marginTop: 1 },
-    h(Text, { color: 'accent' }, `待审批（${approvals.length}）· Enter 允许 · x 拒绝 · Esc 返回`),
-    approvals.length === 0
+    h(Text, { color: 'accent' }, approvalHistoryOpen
+      ? `已决审批（本终端记录 ${approvalHistoryList.length}）· h 返回待审批 · Esc 返回`
+      : `待审批（${approvals.length}）· Enter 允许 · x 拒绝 · h 历史 · Esc 返回`),
+    approvalHistoryOpen
+      ? (approvalHistoryList.length === 0
+        ? h(Text, { color: 'subtle' }, '本终端还没有已决审批（只记录本终端回答的请求）')
+        : approvalHistoryRows)
+      : approvals.length === 0
       ? h(Text, { color: 'subtle' }, '没有待审批的请求')
       : approvals.slice(0, listHeight).map((entry, at) => h(Box, { key: entry.id, flexDirection: 'column' },
         h(Box, { flexDirection: 'row' },
@@ -3938,7 +4016,7 @@ export function TeamScene(props) {
   const fullFooter = fullViewNode === null ? null : h(Box, { key: 'full-footer', flexDirection: 'column', marginTop: 1 },
     busy ? h(Text, { color: 'accent' }, '处理中…') : null,
     notice === '' ? null : h(Text, { color: 'warning' }, notice),
-    h(Text, { color: 'inactive' }, modeHint(mode, { fieldKey, scheduleStep })),
+    h(Text, { color: 'inactive' }, modeHint(mode, { fieldKey, scheduleStep, approvalHistoryOpen })),
   )
 
   const footer = fullViewNode !== null

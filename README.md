@@ -130,6 +130,7 @@ s        stop that Bot's turn       x      delete (press twice)
 n        create Chief (empty team)  r      re-read state.json
 /        search name or label       t      group chats
 e        edit this Bot's settings   a      answer pending approvals
+h        approval history (in the a panel)
 p        approve pending MCPs       v      mount/unmount capabilities
 u        release this terminal's claim
 space    collapse/expand details
@@ -275,8 +276,8 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
   still holds, and a Bot held elsewhere shows `他窗:<pid>`.
 - **Group, approval and memory screens are keyboard-driven.** They cover
   create/open/edit/delete for groups, allow/reject for approvals, and
-  view/forget for memory; the browser's drag-and-drop member cards, approval
-  history and memory ask/edit/tidy tools are not reproduced.
+  view/forget for memory; the browser's drag-and-drop member cards and memory
+  ask/edit/tidy tools are not reproduced.
 - **The settings form is keyboard-first.** It covers profile, avatar (a shape or
   a local image path), color, effort, permissions, instructions, model, folder,
   privacy, pin/hide, Main Bot, section, Computer access, browser grants, memory,

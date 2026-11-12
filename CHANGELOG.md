@@ -3,6 +3,13 @@
 只记录真实版本号与已经落地的能力。0.10.0–0.13.0 是开发过程中的工作区版本号；
 0.13.0 是首次把完整工作区提交、并对齐 `package.json` 的版本。
 
+## 0.19.0
+
+- 审批面板 `a` 内按 `h` 切换已决审批历史：列出时间、Bot/会话、请求摘要与允许/拒绝/取消。
+- DS Bot 只保留待审批请求，不保存已决记录；历史由本终端进程内记录（最多 50 条，不落盘、不跨窗口），面板明确标注。
+- 支持 DS Bot 的 `onApproval` 结算事件，也覆盖旧运行时下 TUI 自己回答的请求。
+- 新增 `src/approvalHistory.js` 与 `test/probes/approve-history.tsx`。
+
 ## 0.18.0
 
 - 补上 `sessionController.page()`：从 `ctx.sessionPersistence` 以只读方式打开会话日志，按 `throughSeq` / `beforeSeq` / `maxMessages` 向前分页。
