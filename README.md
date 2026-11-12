@@ -127,6 +127,7 @@ dsh --profile dsh-tui
 ↑/↓      move                      Enter   open that Bot's chat
 m        message without leaving    c      create a Bot (name,role,brief)
 s        stop that Bot's turn       x      delete (press twice)
+X        clear the selected failure
 n        create Chief (empty team)  r      re-read state.json
 /        search name or label       t      group chats
 e        edit this Bot's settings   a      answer pending approvals

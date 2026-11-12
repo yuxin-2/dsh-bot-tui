@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { activityOf, markSeen, subscribe, unreadOf } from './activity.js'
+import { activityOf, clearFailure, markSeen, subscribe, unreadOf } from './activity.js'
 import { approvalHistory, recordApproval, subscribeApprovalHistory } from './approvalHistory.js'
 import { watchTeam } from './watch.js'
 
@@ -51,6 +51,7 @@ export const HELP_SECTIONS = [
       ['m', '不离开面板给 Bot 发消息'],
       ['s', '停止该 Bot 当前的回合'],
       ['x', '删除（连按两次确认）'],
+      ['X', '清除选中 Bot 的失败记录'],
       ['space', '折叠 / 展开详情'],
       ['/', '按名称或标签搜索'],
       ['a', '回答待审批的请求'],
@@ -139,7 +140,6 @@ export const HELP_SECTIONS = [
 const HELP_ENTRIES = HELP_SECTIONS.flatMap((section) => [
   { kind: 'title', text: section.title },
   ...section.keys.map(([key, description]) => ({ kind: 'row', key, description })),
-  { kind: 'gap', text: '' },
 ])
 
 export const MODE_HINTS = {
@@ -3276,6 +3276,18 @@ export function TeamScene(props) {
       void stopBot(current)
       return
     }
+    if (input === 'X' && current !== undefined) {
+      // Distinct from `x` (delete): clearing a failure marker must never be one
+      // key away from removing the Bot.
+      if (clearFailure(current.sessionId)) {
+        setPendingDelete(undefined)
+        setNotice(`已清除 ${current.name} 的失败记录。`)
+        rerender()
+      } else {
+        setNotice(`${current.name} 没有失败记录。`)
+      }
+      return
+    }
     if (input === 'x' && current !== undefined) {
       if (current.main) {
         setNotice('Main Bot 不能删除。')
@@ -3370,6 +3382,7 @@ export function TeamScene(props) {
       h(Text, { bold: selected, color: selected ? 'accent' : 'text' }, pad(bot.name, 13)),
       showRole ? h(Text, { color: 'subtle' }, pad(bot.role || '—', 16)) : null,
       showStatus ? h(Text, { color: status.color }, pad(status.text, 10)) : null,
+      bot.live?.failure === undefined ? null : h(Text, { color: 'error' }, ' !失败'),
       here?.id === bot.id ? h(Text, { color: 'success' }, ' 当前')
         : foreignOf(bot) !== undefined ? h(Text, { color: 'warning' }, ` 他窗:${foreignOf(bot)}`)
           : bot.unread > 0 ? h(Text, { color: 'success' }, ' ●新') : null,
@@ -3395,6 +3408,13 @@ export function TeamScene(props) {
       h(Text, { color: detailStatus.color }, detailStatus.text),
       h(Text, { color: 'inactive' }, ` · ${detailRunning}`),
     ),
+    current.live?.failure === undefined
+      ? null
+      : h(Box, { key: 'failure', flexDirection: 'column' },
+        h(Text, { color: 'error' }, `!失败 · ${relative(current.live.failure.at)}`),
+        h(Text, { color: 'warning' }, truncate(`原因 ${current.live.failure.reason ?? '原因未知'}`, Math.max(8, detailWidth - 2))),
+        h(Text, { color: 'inactive' }, truncate(`来源 ${current.live.failure.source} · X 清除`, Math.max(8, detailWidth - 2))),
+      ),
     h(Text, { color: 'inactive' }, truncate(`模型 ${current.model || '默认'}`, Math.max(8, detailWidth - 2))),
     h(Text, { color: 'inactive' }, truncate(`目录 ${current.workDir || '团队工作区'}`, Math.max(8, detailWidth - 2))),
     h(Text, { color: current.unread > 0 ? 'success' : 'inactive' }, `未读 ${current.unread}`),
@@ -3417,6 +3437,9 @@ export function TeamScene(props) {
   )
   const detailLine = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: detailStatus.color }, truncate([
+      current.live?.failure === undefined
+        ? ''
+        : `!失败 ${current.live.failure.reason ?? '原因未知'} · ${relative(current.live.failure.at)}`,
       detailStatus.text,
       detailRunning,
       current.model || '默认',
@@ -4001,7 +4024,6 @@ export function TeamScene(props) {
   const helpView = mode !== 'help' ? null : h(Box, { key: 'help', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: 'accent' }, `按键帮助（${helpTop + 1}–${Math.min(helpTop + helpHeight, HELP_ENTRIES.length)} / ${HELP_ENTRIES.length} 行）`),
     ...HELP_ENTRIES.slice(helpTop, helpTop + helpHeight).map((entry, at) => {
-      if (entry.kind === 'gap') return h(Text, { key: `gap-${helpTop + at}` }, ' ')
       if (entry.kind === 'title') {
         return h(Text, { key: `title-${helpTop + at}`, bold: true, color: 'accent' }, `── ${entry.text}`)
       }
@@ -4030,7 +4052,7 @@ export function TeamScene(props) {
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
       h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
-      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情 · q 返回${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
+      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )

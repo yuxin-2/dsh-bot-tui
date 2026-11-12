@@ -120,6 +120,7 @@ dsh --profile dsh-tui
 ↑/↓      选择                    Enter   进入该 Bot 的聊天
 m        不离开面板发消息          c       新建 Bot（名称,角色,开场任务）
 s        停止该 Bot 当前的回合      x       删除（连按两次）
+X        清除选中 Bot 的失败记录
 n        建 Chief（空团队时）      r       重读 state.json
 /        搜索名称或标签            t       群聊
 e        编辑该 Bot 的设置         a       回答待审批的请求

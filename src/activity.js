@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 
 const LAST_TEXT_MAX = 160
 const LAST_MESSAGES = 5
+const FAILURE_TEXT_MAX = 120
 
 const activity = new Map()
 const seen = new Map()
@@ -74,6 +75,21 @@ function remember(record, role, text, at) {
   record.lastAt = Math.max(record.lastAt, at)
 }
 
+// The agent loop writes the only durable failure record: `turn/end` with
+// `reason.kind === 'error'` and `{ message, code }` from the thrown error (or
+// `LlmError.failure`). Anything else (aborted, completed, blocked) is not a
+// failure; a later non-error turn end clears the last one.
+function failureText(reason) {
+  const error = reason?.error
+  const text = typeof error?.message === 'string' && error.message.trim() !== ''
+    ? error.message.trim()
+    : typeof error?.code === 'string' && error.code !== ''
+    ? error.code
+    : undefined
+  if (text === undefined) return undefined
+  return text.length > FAILURE_TEXT_MAX ? `${text.slice(0, FAILURE_TEXT_MAX)}…` : text
+}
+
 /** Fold one session event into the live record. */
 export function observe(session, event) {
   const sessionId = String(session?.id ?? event?.sessionId ?? '')
@@ -94,10 +110,19 @@ export function observe(session, event) {
       record.status = 'working'
       record.since = at
       break
-    case 'turn/end':
+    case 'turn/end': {
+      const reason = event?.data?.reason
+      if (reason?.kind === 'error') {
+        record.failure = { at, reason: failureText(reason), source: type }
+      } else if (reason?.kind !== 'aborted') {
+        // A completed (or blocked/max-tokens) turn means the session works
+        // again; an abort is the user stopping, not proof of recovery.
+        record.failure = undefined
+      }
       record.status = 'idle'
       record.since = at
       break
+    }
     case 'step/start':
       if (record.status === 'idle') record.status = 'working'
       break
@@ -127,6 +152,15 @@ export function observe(session, event) {
 /** Current live record for a Session, or undefined when it never ran here. */
 export function activityOf(sessionId) {
   return sessionId === undefined || sessionId === null ? undefined : activity.get(String(sessionId))
+}
+
+/** Drop one session's failure marker; false when there was none. */
+export function clearFailure(sessionId) {
+  const record = activityOf(sessionId)
+  if (record?.failure === undefined) return false
+  record.failure = undefined
+  touch()
+  return true
 }
 
 /** True when a Bot replied after the user last opened that Session. */
