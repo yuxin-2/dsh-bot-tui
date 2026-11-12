@@ -168,7 +168,11 @@ unpins the selected entry, `l` moves it between the Bot's own memory and the
 team's shared memory, `m` moves the selected entry to another Bot, group or the
 team memory, `t` undoes the last tidy, and `x` forgets it. `h` opens the change
 log; `Enter` restores a change, `n` loads older rows. Schedules support daily,
-weekly (pick days 1–7), repeat-every, and one-shot times.
+weekly (pick days 1–7), repeat-every, and one-shot times. The schedule panel
+shows the next firing time and, when the runtime recorded one, the last delivery
+time; the selected task's full prompt appears below the list, while long rows are
+truncated. DS Bot does not record whether the scheduled turn succeeded, so the
+execution result reads unavailable.
 
 Rows show live state: `工作中 Ns` (a turn is running), `待回答` (a card is
 waiting for you), `空闲`, `●新` (a reply arrived since you last opened it), and

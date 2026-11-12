@@ -4171,13 +4171,35 @@ export function TeamScene(props) {
     }
     return String(task.kind ?? '')
   }
-  const taskStateText = (task) => task.state === 'overdue' ? '已过期'
-    : task.state === 'paused' ? '已暂停'
-    : task.state === 'finished' ? '已结束'
-    : task.scheduledAt === undefined ? '' : `下次 ${new Date(task.scheduledAt).toLocaleString()}`
+  // DS Bot's schedules endpoint carries the next firing (scheduledAt) and, when
+  // one has been delivered, a lastDelivery receipt. It does not record whether
+  // the target turn succeeded, so the result stays explicitly unavailable.
+  const scheduleClock = (value) => {
+    const at = new Date(value)
+    if (Number.isNaN(at.getTime())) return undefined
+    return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  }
+  const scheduleNextText = (task) => {
+    if (task.state === 'paused' || task.status === 'paused') {
+      const at = scheduleClock(task.scheduledAt)
+      return at === undefined ? '已暂停' : `已暂停 · 下次 ${at}`
+    }
+    if (task.state === 'finished' || task.status === 'ended') return '已结束'
+    const at = scheduleClock(task.scheduledAt)
+    if (at === undefined) return '下次 不可用'
+    return task.state === 'overdue' ? `已过期 ${at}` : `下次 ${at}`
+  }
+  const scheduleDeliveryText = (task) => {
+    const at = scheduleClock(task.lastDelivery?.deliveredAt)
+    return at === undefined ? '最近投递 不可用' : `最近投递 ${at}`
+  }
+  const scheduleStatusText = (task) => [scheduleNextText(task), scheduleDeliveryText(task), '执行结果 不可用'].join(' · ')
   const myScheduleList = mySchedules()
   const scheduleAt = Math.min(scheduleIndex, Math.max(0, myScheduleList.length - 1))
-  const scheduleOffset = Math.max(0, Math.min(scheduleAt - listHeight + 1, myScheduleList.length - listHeight))
+  const scheduleListHeight = Math.max(1, Math.min(myScheduleList.length, rows - 18))
+  const scheduleOffset = Math.max(0, Math.min(scheduleAt - scheduleListHeight + 1, myScheduleList.length - scheduleListHeight))
+  const selectedSchedule = myScheduleList[scheduleAt]
+  const schedulePrompt = String(selectedSchedule?.prompt ?? '').trim()
   const scheduleView = mode !== 'schedules' ? null : h(Box, { key: 'schedules', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: 'accent' }, `${scheduleTarget?.name ?? '?'} 的定时任务（n 新建 · x 删除 · r 刷新 · Esc 返回）`),
     scheduleBusy
@@ -4186,17 +4208,25 @@ export function TeamScene(props) {
       ? h(Text, { color: 'warning' }, 'DSH 的 Automation tasks 没有启用')
       : myScheduleList.length === 0
       ? h(Text, { color: 'subtle' }, '没有定时任务 · 按 n 新建')
-      : myScheduleList.slice(scheduleOffset, scheduleOffset + listHeight).map((task, at) => {
+      : myScheduleList.slice(scheduleOffset, scheduleOffset + scheduleListHeight).map((task, at) => {
         const index = scheduleOffset + at
         return h(Box, { key: task.id ?? `${task.title}-${index}`, flexDirection: 'column' },
           h(Box, { flexDirection: 'row' },
             h(Text, { color: index === scheduleAt ? 'accent' : 'subtle' }, index === scheduleAt ? ' ❯ ' : '   '),
-            h(Text, { bold: index === scheduleAt, color: index === scheduleAt ? 'accent' : 'text' }, pad(task.title, 24)),
-            h(Text, { color: 'subtle' }, timingText(task)),
+            h(Text, { bold: index === scheduleAt, color: index === scheduleAt ? 'accent' : 'text' }, pad(truncate(task.title ?? '未命名', 24), 24)),
+            h(Text, { color: 'subtle' }, truncate(timingText(task), Math.max(8, columns - 32))),
           ),
-          h(Text, { color: 'inactive' }, `   ${taskStateText(task)}`),
+          h(Text, { color: 'inactive' }, `   ${truncate(scheduleStatusText(task), Math.max(8, columns - 4))}`),
         )
       }),
+    selectedSchedule === undefined ? null : h(Box, { key: 'schedule-detail', flexDirection: 'column', marginTop: 1 },
+      h(Text, { color: 'accent' }, `任务详情 · ${selectedSchedule.title ?? '未命名'}`),
+      h(Text, { color: 'inactive' }, scheduleStatusText(selectedSchedule)),
+      h(Text, { color: 'subtle' }, '完整指令：'),
+      ...(schedulePrompt === ''
+        ? [h(Text, { key: 'empty-prompt', color: 'inactive' }, '  （没有内容）')]
+        : schedulePrompt.split('\n').map((line, at) => h(Text, { key: `prompt-${at}`, color: 'inactive' }, `  ${line}`))),
+    ),
   )
 
   const scheduleNewView = mode !== 'schedule-new' ? null : h(Box, { key: 'schedule-new', flexDirection: 'column', marginTop: 1 },
