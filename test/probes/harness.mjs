@@ -43,7 +43,7 @@ export const { viewportLines } = await import(pathToFileURL(join(dshTuiRoot, 'sc
 const scene = await import(pathToFileURL(join(repoRoot, 'src/scene.js')).href)
 export const { TeamScene, bindRuntime } = scene
 const activity = await import(pathToFileURL(join(repoRoot, 'src/activity.js')).href)
-export const { observe, install } = activity
+export const { observe, install, activityOf } = activity
 
 const XTermCjs = tuiRequire('@xterm/headless')
 export const XTerm = XTermCjs.Terminal ?? XTermCjs

@@ -175,6 +175,16 @@ function elapsed(since) {
   return `${Math.round(seconds / 60)}m`
 }
 
+function relative(at) {
+  const seconds = Math.max(0, Math.round((Date.now() - Number(at ?? Date.now())) / 1000))
+  if (seconds < 60) return `${seconds}s 前`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m 前`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h 前`
+  return `${Math.round(hours / 24)}d 前`
+}
+
 function reason(result) {
   switch (result?.reason) {
     case 'occupied': return `会话被另一个终端占用（pid ${result.pid}）`
@@ -294,6 +304,7 @@ export function TeamScene(props) {
   const [memoryMoveIndex, setMemoryMoveIndex] = React.useState(0)
   const [memoryMoveEntry, setMemoryMoveEntry] = React.useState(undefined)
   const [search, setSearch] = React.useState('')
+  const [detailOpen, setDetailOpen] = React.useState(true)
   const [memoryEntries, setMemoryEntries] = React.useState([])
   const [memoryIndex, setMemoryIndex] = React.useState(0)
   const [memoryBusy, setMemoryBusy] = React.useState(false)
@@ -2939,6 +2950,10 @@ export function TeamScene(props) {
       move(1)
       return
     }
+    if (input === ' ') {
+      setDetailOpen((open) => !open)
+      return
+    }
     if (input === 'r') {
       setTeam(readTeam())
       setPendingDelete(undefined)
@@ -3124,23 +3139,59 @@ export function TeamScene(props) {
     ))
   }
 
-  const detail = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column', marginTop: 1 },
-    h(Text, { color: 'subtle' }, '─'.repeat(Math.max(8, Math.min(columns - 2, 56)))),
+  const detailMessages = current?.live?.messages ?? []
+  const detailLatest = detailMessages.length > 0 ? detailMessages[detailMessages.length - 1] : undefined
+  const detailStatus = current === undefined ? undefined : statusOf(current)
+  const detailRunning = current?.live === undefined
+    ? '暂无实时记录'
+    : current.live.status === 'idle'
+    ? `最后活动 ${current.live.lastAt === 0 ? '—' : relative(current.live.lastAt)}`
+    : `已运行 ${elapsed(current.live.since)}`
+  const detailWidth = Math.min(48, Math.max(32, columns - 48))
+  const detailWide = current !== undefined && columns >= 100
+  const detailPanel = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column' },
+    h(Text, { bold: true, color: 'accent' }, truncate(current.name, Math.max(8, detailWidth - 2))),
+    h(Text, { color: 'subtle' }, truncate(`${current.role || '无角色'}${current.sectionId === undefined ? '' : ` · ${sectionName(current.sectionId)}`}`, Math.max(8, detailWidth - 2))),
     h(Text, null,
-      h(Text, { bold: true, color: 'accent' }, truncate(current.name, 40)),
-      h(Text, { color: 'subtle' }, ` · ${truncate(current.role || '无角色', 24)}`),
-      current.sectionId === undefined ? null : h(Text, { color: 'inactive' }, ` · ${sectionName(current.sectionId)}`),
-      current.model === '' ? null : h(Text, { color: 'inactive' }, ` · ${truncate(current.model, Math.max(8, columns - 32))}`),
-      current.workDir === '' ? null : h(Text, { color: 'inactive' }, ` · ${truncate(current.workDir, Math.max(8, columns - 14))}`),
+      h(Text, { color: detailStatus.color }, detailStatus.text),
+      h(Text, { color: 'inactive' }, ` · ${detailRunning}`),
     ),
+    h(Text, { color: 'inactive' }, truncate(`模型 ${current.model || '默认'}`, Math.max(8, detailWidth - 2))),
+    h(Text, { color: 'inactive' }, truncate(`目录 ${current.workDir || '团队工作区'}`, Math.max(8, detailWidth - 2))),
+    h(Text, { color: current.unread > 0 ? 'success' : 'inactive' }, `未读 ${current.unread}`),
     foreignOf(current) === undefined
       ? null
-      : h(Text, { color: 'warning' }, `占用：pid ${foreignOf(current)}（另一个 TUI 窗口）`),
-    capabilityNote === undefined ? null : h(Text, { color: 'warning' }, truncate(capabilityNote, Math.max(8, columns - 2))),
-    current.live?.lastText
-      ? h(Text, { color: 'subtle' }, `最近：${truncate(current.live.lastText, Math.max(8, columns - 6))}`)
-      : null,
+      : h(Text, { color: 'warning' }, truncate(`占用：pid ${foreignOf(current)}`, Math.max(8, detailWidth - 2))),
+    capabilityNote === undefined ? null : h(Text, { color: 'warning' }, truncate(capabilityNote, Math.max(8, detailWidth - 2))),
+    h(Text, { color: 'subtle' }, '最近消息'),
+    detailMessages.length === 0
+      ? h(Text, { color: 'inactive' }, '暂无消息')
+      : detailMessages.map((message, at) => h(Box, { key: `${message.at}-${at}`, flexDirection: 'column' },
+        h(Text, null,
+          h(Text, { color: message.role === 'user' ? 'accent' : 'success' }, message.role === 'user' ? '你' : 'Bot'),
+          h(Text, { color: 'inactive' }, ` · ${relative(message.at)}`),
+        ),
+        h(Text, { color: 'text' }, truncate(message.text, Math.max(8, detailWidth - 2))),
+      )),
+    h(Text, { color: 'inactive' }, 'Enter 进入 · m 发消息 · s 停止'),
+    h(Text, { color: 'inactive' }, 'space 折叠'),
   )
+  const detailLine = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column', marginTop: 1 },
+    h(Text, { color: detailStatus.color }, truncate([
+      detailStatus.text,
+      detailRunning,
+      current.model || '默认',
+      current.workDir === '' ? '' : current.workDir,
+      current.unread > 0 ? `未读 ${current.unread}` : '',
+    ].filter((part) => part !== '').join(' · '), Math.max(8, columns - 2))),
+    h(Text, { color: 'text' }, truncate([
+      '最近：',
+      detailLatest === undefined
+        ? '暂无消息'
+        : `${detailLatest.role === 'user' ? '你' : 'Bot'}: ${detailLatest.text}`,
+    ].join(''), Math.max(8, columns - 2))),
+  )
+  const detail = !detailOpen || current === undefined ? null : detailWide ? detailPanel : detailLine
 
   const boundNames = (name) => {
     const bound = team.bots.filter((bot) => bot.capabilities.includes(name)).map((bot) => bot.name)
@@ -3758,7 +3809,7 @@ export function TeamScene(props) {
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
       h(Text, { color: 'subtle' }, '↑↓ 选择 · Enter 聊天 · m 发消息 · r 刷新 · / 搜索'),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
-      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · q 返回${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
+      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情 · q 返回${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
@@ -3774,9 +3825,15 @@ export function TeamScene(props) {
     ? h(Text, { color: 'subtle' }, `没有匹配「${search}」的 Bot · Esc 清除`)
     : h(Box, { flexDirection: 'column' }, rowsView)
 
+  const body = fullViewNode ?? (detailWide && detail !== null
+    ? h(Box, { key: 'body', flexDirection: 'row', width: '100%' },
+      h(Box, { flexDirection: 'column', width: Math.max(20, columns - detailWidth - 4) }, empty),
+      h(Box, { flexDirection: 'column', width: detailWidth, paddingLeft: 1 }, detail))
+    : h(Box, { key: 'body', flexDirection: 'column' }, empty, detail))
+
   return h(Box, { flexDirection: 'column', width: '100%', paddingX: 1 },
     header,
-    fullViewNode ?? h(Box, { flexDirection: 'column' }, empty, detail),
+    body,
     h(Box, { flexGrow: 1 }),
     footer,
   )

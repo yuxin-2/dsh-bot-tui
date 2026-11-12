@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 const LAST_TEXT_MAX = 160
+const LAST_MESSAGES = 5
 
 const activity = new Map()
 const seen = new Map()
@@ -62,6 +63,17 @@ function touch() {
   for (const listener of listeners) listener()
 }
 
+function remember(record, role, text, at) {
+  const clean = text.length > LAST_TEXT_MAX ? `${text.slice(0, LAST_TEXT_MAX)}…` : text
+  const messages = Array.isArray(record.messages) ? record.messages : []
+  messages.push({ role, text: clean, at })
+  while (messages.length > LAST_MESSAGES) messages.shift()
+  record.messages = messages
+  record.lastText = clean
+  record.lastRole = role
+  record.lastAt = Math.max(record.lastAt, at)
+}
+
 /** Fold one session event into the live record. */
 export function observe(session, event) {
   const sessionId = String(session?.id ?? event?.sessionId ?? '')
@@ -74,6 +86,7 @@ export function observe(session, event) {
     lastAt: 0,
     lastText: '',
     lastRole: '',
+    messages: [],
   }
 
   switch (type) {
@@ -96,19 +109,12 @@ export function observe(session, event) {
       break
     case 'assistant/message': {
       const text = textOf(event?.data?.message)
-      if (text !== '') {
-        record.lastText = text.length > LAST_TEXT_MAX ? `${text.slice(0, LAST_TEXT_MAX)}…` : text
-        record.lastAt = at
-        record.lastRole = 'assistant'
-      }
+      if (text !== '') remember(record, 'assistant', text, at)
       break
     }
     case 'user/message': {
       const text = textOf({ content: event?.data?.content })
-      if (text !== '') {
-        record.lastAt = Math.max(record.lastAt, at)
-        record.lastRole = 'user'
-      }
+      if (text !== '') remember(record, 'user', text, at)
       break
     }
     default:

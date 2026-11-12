@@ -29,7 +29,7 @@ third-party plugin that consumes dsh-TUI's public plugin seams:
 There is deliberately **no chat renderer here**. Entering a Bot calls
 `channel.resumeTo()` and hands the terminal back to dsh-TUI's own Chat screen:
 whatever you type is composed by dsh-TUI. The scene owns the roster and its
-keyboard panels; it never renders a transcript.
+keyboard panels.
 
 The transcript *chrome* is the one thing this repo does tune: see
 [Terminal rendering](#terminal-rendering) for the four-file dsh-TUI patch that
@@ -132,6 +132,7 @@ n        create Chief (empty team)  r      re-read state.json
 e        edit this Bot's settings   a      answer pending approvals
 p        approve pending MCPs       v      mount/unmount capabilities
 u        release this terminal's claim
+space    collapse/expand details
 y        token usage for this Bot   o      Computer panel
 q/Esc  back to the chat
 ```
