@@ -133,6 +133,7 @@ e        edit this Bot's settings   a      answer pending approvals
 p        approve pending MCPs       v      mount/unmount capabilities
 u        release this terminal's claim
 space    collapse/expand details
+?        help overlay
 y        token usage for this Bot   o      Computer panel
 q/Esc  back to the chat
 ```

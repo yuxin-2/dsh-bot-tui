@@ -1,6 +1,6 @@
 {
   "name": "dsh-bot-tui",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "DS Bot's Bot team in the terminal, built on dsh-TUI",
   "author": "yuxin <1727414387@qq.com>",
   "type": "module",

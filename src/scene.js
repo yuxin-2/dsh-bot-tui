@@ -36,6 +36,163 @@ const COMPUTER_LEVELS = [
 ]
 const BROWSER_KINDS = ['post', 'upload', 'download', 'delete', '*']
 
+// One place for the key hints, so every mode has a footer line and the help
+// overlay cannot drift from what the roster actually accepts. `?` opens the
+// grouped view built from the same list.
+export const HELP_SECTIONS = [
+  {
+    title: '名册',
+    keys: [
+      ['↑/↓ 或 k/j', '移动光标'],
+      ['g / G', '跳到首位 / 末位'],
+      ['Enter', '进入该 Bot 的聊天'],
+      ['m', '不离开面板给 Bot 发消息'],
+      ['s', '停止该 Bot 当前的回合'],
+      ['x', '删除（连按两次确认）'],
+      ['space', '折叠 / 展开详情'],
+      ['/', '按名称或标签搜索'],
+      ['a', '回答待审批的请求'],
+      ['p', '批准待授权的 MCP 能力'],
+      ['v', '挂载 / 卸载当前 Bot 的能力'],
+      ['u', '释放本终端对该会话的占用'],
+      ['n', '空团队时创建 Chief'],
+      ['r', '重读 state.json'],
+      ['?', '打开 / 关闭本帮助'],
+      ['q / Esc', '返回聊天（先清除搜索）'],
+    ],
+  },
+  {
+    title: 'Bot 设置',
+    keys: [
+      ['e', '编辑当前 Bot 的设置'],
+      ['资料 / 头像 / 颜色', '名称、标签、形状或图片路径、配色'],
+      ['模型 / 思考级别', '选择模型与推理档位'],
+      ['权限', 'DSH 权限预设'],
+      ['指令 / 目录', '系统提示词与工作目录'],
+      ['私密 / 置顶 / 隐藏', '控制名册中的可见性'],
+      ['分组', '在侧边栏分组间移动'],
+      ['Computer / Browser', '按级别授权与按站点授权'],
+      ['复制 / 删除', '复制配置或删除 Bot'],
+      ['Esc', '返回名册'],
+    ],
+  },
+  {
+    title: '群聊',
+    keys: [
+      ['t', '打开群聊列表'],
+      ['Enter', '打开选中的群聊'],
+      ['n', '从 Bot 勾选新建群聊'],
+      ['e', '群设置（成员、管理员、回复模式）'],
+      ['x', '删除群聊（连按两次）'],
+      ['Esc', '返回名册'],
+    ],
+  },
+  {
+    title: '记忆',
+    keys: [
+      ['e → 记忆', '打开当前 Bot 的记忆面板'],
+      ['a', '用自然语言提问增改删条目'],
+      ['p', '置顶 / 取消置顶'],
+      ['l', '在私有记忆与团队记忆间移动'],
+      ['m', '移动到其它 Bot / 群聊 / 团队记忆'],
+      ['t', '撤销上次整理'],
+      ['h', '变更记录（Enter 恢复，n 更早）'],
+      ['x', '忘记选中的条目（再按一次）'],
+      ['r', '刷新记忆'],
+      ['Esc', '返回名册'],
+    ],
+  },
+  {
+    title: '定时',
+    keys: [
+      ['e → 定时', '打开当前 Bot 的定时任务'],
+      ['n', '新建（每天 / 每周 1–7 / 每隔 / 一次）'],
+      ['x', '删除选中的任务'],
+      ['r', '刷新列表'],
+      ['Esc', '返回名册'],
+    ],
+  },
+  {
+    title: 'Computer',
+    keys: [
+      ['o', '打开 Computer 面板'],
+      ['Enter', '切换总开关 / 重试提供方'],
+      ['e → Computer', '设置该 Bot 的访问级别'],
+      ['x', '撤销已授权的应用'],
+      ['Esc', '返回名册'],
+    ],
+  },
+  {
+    title: '用量',
+    keys: [
+      ['y', '查看当前 Bot 的 token 用量'],
+      ['d / w / m', '按一天 / 一周 / 一月汇总'],
+      ['r', '刷新统计'],
+      ['Esc', '返回名册'],
+    ],
+  },
+]
+
+const HELP_ENTRIES = HELP_SECTIONS.flatMap((section) => [
+  { kind: 'title', text: section.title },
+  ...section.keys.map(([key, description]) => ({ kind: 'row', key, description })),
+  { kind: 'gap', text: '' },
+])
+
+export const MODE_HINTS = {
+  list: '↑↓ 选择 · Enter 聊天 · m 发消息 · r 刷新 · / 搜索 · ? 帮助',
+  search: '输入筛选 · Enter 确认 · Esc 清除',
+  help: '↑↓ 滚动 · Esc 返回',
+  create: 'Enter 创建 · Esc 取消',
+  message: 'Enter 发送 · Esc 取消',
+  edit: '↑↓ 选择 · Enter 修改 · Esc 返回',
+  field: 'Enter 保存 · Esc 取消',
+  models: '↑↓ 选择 · Enter 应用 · r 刷新 · Esc 返回',
+  efforts: '↑↓ 选择 · Enter 应用 · r 刷新 · Esc 返回',
+  permission: '↑↓ 选择 · Enter 应用 · Esc 返回',
+  sections: '↑↓ 选择 · Enter 应用 · n 新建 · Esc 返回',
+  'section-new': 'Enter 保存 · Esc 取消',
+  browser: '↑↓ 选择 · n 新建 · x 撤销 · Esc 返回',
+  'browser-new': 'Enter 下一步 · Esc 取消',
+  computer: 'Enter 开关 · r 重试 · x 撤销应用 · Esc 返回',
+  'computer-level': '↑↓ 选择 · Enter 应用 · Esc 返回',
+  groups: '↑↓ 选择 · Enter 打开 · n 新建 · e 设置 · x 删除 · Esc 返回',
+  'group-new': '↑↓ 选择 · 空格 切换 · a 全选 · Enter 保存 · Esc 取消',
+  'group-members': '↑↓ 选择 · 空格 切换 · a 全选 · Enter 保存 · Esc 取消',
+  'group-edit': '↑↓ 选择 · Enter 修改 · Esc 返回',
+  'room-sections': '↑↓ 选择 · Enter 应用 · n 新建 · Esc 返回',
+  'room-section-new': 'Enter 保存 · Esc 取消',
+  'room-permission': '↑↓ 选择 · Enter 应用 · Esc 返回',
+  schedules: '↑↓ 选择 · n 新建 · x 删除 · r 刷新 · Esc 返回',
+  'schedule-new': 'Enter 下一步 · Esc 取消',
+  memory: '↑↓ 选择 · a 提问 · p 置顶 · l 共享 · m 移动 · t 撤销整理 · h 历史 · x 忘记（再按一次）· r 刷新 · Esc 返回',
+  'memory-ask': 'Enter 发送 · Esc 取消',
+  'memory-move': '↑↓ 选择 · Enter 移动 · Esc 返回',
+  'memory-history': '↑↓ 选择 · Enter 恢复 · n 更早 · r 刷新 · Esc 返回',
+  avatar: '↑↓ 选择 · Enter 应用 · i 图片路径 · x 恢复默认 · Esc 返回',
+  'avatar-path': 'Enter 使用 · Esc 取消',
+  colors: '↑↓ 选择 · Enter 应用 · Esc 返回',
+  usage: 'd 一天 · w 一周 · m 一月 · r 刷新 · Esc 返回',
+  approve: '↑↓ 选择 · Enter 批准 · Esc 返回',
+  capabilities: '↑↓ 选择 · Enter 挂载/卸载 · Esc 返回',
+  approvals: '↑↓ 选择 · Enter 允许 · x 拒绝 · Esc 返回',
+}
+
+// Two modes carry state-dependent hints; everything else is a static line.
+export function modeHint(mode, state = {}) {
+  if (mode === 'field') {
+    return state.fieldKey === 'instructions'
+      ? 'Enter 换行 · Ctrl+Enter 保存 · Esc 取消'
+      : MODE_HINTS.field
+  }
+  if (mode === 'schedule-new') {
+    return state.scheduleStep === 4
+      ? '1–7 切换 · Enter 保存 · Esc 取消'
+      : MODE_HINTS['schedule-new']
+  }
+  return MODE_HINTS[mode] ?? '↑↓ 选择 · Enter 确认 · Esc 返回'
+}
+
 // The DS Bot runtime, published by its `ctx.provide('dsBot', rt)` row. Bound
 // lazily: the row order inside a profile is not a promise that the plugin has
 // applied by the time this row registers its scene.
@@ -304,6 +461,7 @@ export function TeamScene(props) {
   const [memoryMoveIndex, setMemoryMoveIndex] = React.useState(0)
   const [memoryMoveEntry, setMemoryMoveEntry] = React.useState(undefined)
   const [search, setSearch] = React.useState('')
+  const [helpAt, setHelpAt] = React.useState(0)
   const [detailOpen, setDetailOpen] = React.useState(true)
   const [memoryEntries, setMemoryEntries] = React.useState([])
   const [memoryIndex, setMemoryIndex] = React.useState(0)
@@ -396,6 +554,9 @@ export function TeamScene(props) {
   const foreignOf = holderOf
   const listHeight = Math.max(1, Math.min(count, rows - 11))
   const offset = Math.max(0, Math.min(index - listHeight + 1, count - listHeight))
+  const helpHeight = Math.max(1, rows - 8)
+  const helpMax = Math.max(0, HELP_ENTRIES.length - helpHeight)
+  const helpTop = Math.min(helpAt, helpMax)
 
   const leave = (sessionId) => {
     markSessionSeen(sessionId ?? channel.sessionId)
@@ -2061,6 +2222,26 @@ export function TeamScene(props) {
   }
 
   useInput((input, key) => {
+    if (mode === 'help') {
+      if (key.escape || input === 'q' || input === '?') {
+        setMode('list')
+        setNotice('')
+        return
+      }
+      if (key.upArrow || input === 'k') {
+        setHelpAt((at) => Math.max(0, Math.min(at, helpMax) - 1))
+        return
+      }
+      if (key.downArrow || input === 'j') {
+        setHelpAt((at) => Math.min(helpMax, at + 1))
+        return
+      }
+      if (key.return || input === ' ') {
+        setMode('list')
+        setNotice('')
+      }
+      return
+    }
     if (mode === 'approve') {
       if (key.escape) {
         setMode('list')
@@ -2954,6 +3135,12 @@ export function TeamScene(props) {
       setDetailOpen((open) => !open)
       return
     }
+    if (input === '?') {
+      setHelpAt(0)
+      setMode('help')
+      setNotice('')
+      return
+    }
     if (input === 'r') {
       setTeam(readTeam())
       setPendingDelete(undefined)
@@ -3202,7 +3389,7 @@ export function TeamScene(props) {
 
   const approveAt = Math.min(approveIndex, Math.max(0, team.pending.length - 1))
   const approveView = mode !== 'approve' ? null : h(Box, { key: 'approve', flexDirection: 'column', marginTop: 1 },
-    h(Text, { color: 'accent' }, '待授权的 MCP 能力（Enter 批准，Esc 返回）'),
+    h(Text, { color: 'accent' }, '待授权的 MCP 能力'),
     ...team.pending.map((item, at) => h(Box, { key: item.name, flexDirection: 'column' },
       h(Box, { flexDirection: 'row' },
         h(Text, { color: at === approveAt ? 'accent' : 'subtle' }, at === approveAt ? ' ❯ ' : '   '),
@@ -3211,14 +3398,13 @@ export function TeamScene(props) {
       ),
       h(Text, { color: 'inactive' }, `   ${boundNames(item.name)}`),
     )),
-    notice === '' ? null : h(Text, { color: 'warning' }, notice),
     h(Text, { color: 'inactive' }, '批准后会立即挂载给已绑定它的 Bot；首次启动 MCP 可能慢几秒。'),
   )
 
   const capabilityItems = capabilityList()
   const capAt = Math.min(capIndex, Math.max(0, capabilityItems.length - 1))
   const capView = mode !== 'capabilities' ? null : h(Box, { key: 'capabilities', flexDirection: 'column', marginTop: 1 },
-    h(Text, { color: 'accent' }, `${current?.name ?? '?'} 的能力（Enter 挂载/卸载，Esc 返回）`),
+    h(Text, { color: 'accent' }, `${current?.name ?? '?'} 的能力`),
     ...(capabilityItems.length === 0
       ? [h(Text, { color: 'subtle' }, '没有可挂载的能力；stdio MCP 先按 p 批准。')]
       : capabilityItems.map((item, at) => h(Box, { key: item.name, flexDirection: 'row' },
@@ -3227,8 +3413,6 @@ export function TeamScene(props) {
         h(Text, { color: item.attached ? 'success' : 'subtle' }, item.attached ? ' 已挂载' : ' 未挂载'),
         h(Text, { color: 'subtle' }, ` ${truncate(item.description ?? '', Math.max(8, columns - 35))}`),
       ))),
-    busy ? h(Text, { color: 'accent' }, '处理中…') : null,
-    notice === '' ? null : h(Text, { color: 'warning' }, notice),
   )
 
   const editRows = current === undefined ? [] : editFields(current)
@@ -3733,73 +3917,29 @@ export function TeamScene(props) {
     memoryHistoryMore === undefined ? null : h(Text, { color: 'inactive' }, '还有更早的变更 · n 加载'),
   )
 
-  const fullViewNode = editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
+  const helpView = mode !== 'help' ? null : h(Box, { key: 'help', flexDirection: 'column', marginTop: 1 },
+    h(Text, { color: 'accent' }, `按键帮助（${helpTop + 1}–${Math.min(helpTop + helpHeight, HELP_ENTRIES.length)} / ${HELP_ENTRIES.length} 行）`),
+    ...HELP_ENTRIES.slice(helpTop, helpTop + helpHeight).map((entry, at) => {
+      if (entry.kind === 'gap') return h(Text, { key: `gap-${helpTop + at}` }, ' ')
+      if (entry.kind === 'title') {
+        return h(Text, { key: `title-${helpTop + at}`, bold: true, color: 'accent' }, `── ${entry.text}`)
+      }
+      return h(Box, { key: `row-${helpTop + at}`, flexDirection: 'row' },
+        h(Text, { color: 'text' }, pad(entry.key, 20)),
+        h(Text, { color: 'inactive' }, truncate(entry.description, Math.max(8, columns - 22))),
+      )
+    }),
+  )
+
+  const fullViewNode = approveView ?? capView ?? helpView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
   const fullFooter = fullViewNode === null ? null : h(Box, { key: 'full-footer', flexDirection: 'column', marginTop: 1 },
     busy ? h(Text, { color: 'accent' }, '处理中…') : null,
     notice === '' ? null : h(Text, { color: 'warning' }, notice),
-    h(Text, { color: 'inactive' }, mode === 'edit'
-      ? '↑↓ 选择 · Enter 修改 · Esc 返回'
-      : mode === 'field'
-      ? (fieldKey === 'instructions' ? 'Enter 换行 · Ctrl+Enter 保存 · Esc 取消' : 'Enter 保存 · Esc 取消')
-      : mode === 'models'
-      ? '↑↓ 选择 · Enter 应用 · r 刷新 · Esc 返回'
-      : mode === 'efforts'
-      ? '↑↓ 选择 · Enter 应用 · r 刷新 · Esc 返回'
-      : mode === 'permission'
-      ? '↑↓ 选择 · Enter 应用 · Esc 返回'
-      : mode === 'sections'
-      ? '↑↓ 选择 · Enter 应用 · n 新建 · Esc 返回'
-      : mode === 'section-new'
-      ? 'Enter 保存 · Esc 取消'
-      : mode === 'browser'
-      ? '↑↓ 选择 · n 新建 · x 撤销 · Esc 返回'
-      : mode === 'browser-new'
-      ? 'Enter 下一步 · Esc 取消'
-      : mode === 'computer'
-      ? 'Enter 开关 · r 重试 · x 撤销应用 · Esc 返回'
-      : mode === 'computer-level'
-      ? '↑↓ 选择 · Enter 应用 · Esc 返回'
-      : mode === 'groups'
-      ? '↑↓ 选择 · Enter 打开 · n 新建 · e 设置 · x 删除 · Esc 返回'
-      : mode === 'group-new' || mode === 'group-members'
-      ? '↑↓ 选择 · 空格 切换 · a 全选 · Enter 保存 · Esc 取消'
-      : mode === 'group-edit'
-      ? '↑↓ 选择 · Enter 修改 · Esc 返回'
-      : mode === 'room-sections'
-      ? '↑↓ 选择 · Enter 应用 · n 新建 · Esc 返回'
-      : mode === 'room-section-new'
-      ? 'Enter 保存 · Esc 取消'
-      : mode === 'room-permission'
-      ? '↑↓ 选择 · Enter 应用 · Esc 返回'
-      : mode === 'schedules'
-      ? '↑↓ 选择 · n 新建 · x 删除 · r 刷新 · Esc 返回'
-      : mode === 'schedule-new'
-      ? (scheduleStep === 4 ? '1–7 切换 · Enter 保存 · Esc 取消' : 'Enter 下一步 · Esc 取消')
-      : mode === 'memory'
-      ? '↑↓ 选择 · a 提问 · p 置顶 · l 共享 · m 移动 · t 撤销整理 · h 历史 · x 忘记（再按一次）· r 刷新 · Esc 返回'
-      : mode === 'memory-ask'
-      ? 'Enter 发送 · Esc 取消'
-      : mode === 'memory-move'
-      ? '↑↓ 选择 · Enter 移动 · Esc 返回'
-      : mode === 'memory-history'
-      ? '↑↓ 选择 · Enter 恢复 · n 更早 · r 刷新 · Esc 返回'
-      : mode === 'avatar'
-      ? '↑↓ 选择 · Enter 应用 · i 图片路径 · x 恢复默认 · Esc 返回'
-      : mode === 'avatar-path'
-      ? 'Enter 使用 · Esc 取消'
-      : mode === 'colors'
-      ? '↑↓ 选择 · Enter 应用 · Esc 返回'
-      : mode === 'usage'
-      ? 'd 一天 · w 一周 · m 一月 · r 刷新 · Esc 返回'
-      : '↑↓ 选择 · Enter 允许 · x 拒绝 · Esc 返回'),
+    h(Text, { color: 'inactive' }, modeHint(mode, { fieldKey, scheduleStep })),
   )
 
   const footer = fullViewNode !== null
     ? fullFooter
-    : mode === 'approve'
-    ? approveView
-    : mode === 'capabilities'
-    ? capView
     : mode === 'list' || mode === 'search'
     ? h(Box, { key: 'footer', flexDirection: 'column', marginTop: 1 },
       busy ? h(Text, { color: 'accent' }, '处理中…') : null,
@@ -3807,7 +3947,7 @@ export function TeamScene(props) {
         ? h(Text, null, h(Text, { color: 'accent' }, ' 搜索 '), h(Text, null, search === '' ? ' ' : search))
         : null,
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
-      h(Text, { color: 'subtle' }, '↑↓ 选择 · Enter 聊天 · m 发消息 · r 刷新 · / 搜索'),
+      h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
       h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情 · q 返回${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
@@ -3817,6 +3957,7 @@ export function TeamScene(props) {
       h(Text, { color: 'accent' }, mode === 'message' ? `发给 ${current?.name ?? '?'}（输入后 Enter 发送，Esc 取消）` : '新建 Bot（名称,角色,开场任务，例如 Dev,编码,先读 README）'),
       h(Text, null, h(Text, { color: 'accent' }, ' ❯ '), h(Text, null, draft === '' ? ' ' : draft)),
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
+      h(Text, { color: 'inactive' }, modeHint(mode)),
     )
 
   const empty = total === 0
