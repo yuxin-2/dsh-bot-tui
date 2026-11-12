@@ -321,8 +321,11 @@ cordis.patch.yml   profile rows inserted by this bundle
 patches/           the upstream DS Bot patch
 ```
 
-There is no automated test suite yet; verification is the boot check plus the
-`/bots` smoke flow above. Contributions for a headless harness are welcome.
+```bash
+# from the repo root
+pnpm install
+pnpm test           # node --check + headless probes
+```
 
 ## License and credits
 

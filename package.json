@@ -1,6 +1,6 @@
 {
   "name": "dsh-bot-tui",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "DS Bot's Bot team in the terminal, built on dsh-TUI",
   "author": "yuxin <1727414387@qq.com>",
   "type": "module",
@@ -33,6 +33,9 @@
   "license": "Apache-2.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "node test/probes/run.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": "*"

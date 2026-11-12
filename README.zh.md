@@ -280,8 +280,11 @@ cordis.patch.yml   本 bundle 插入的 profile 行
 patches/           上游 DS Bot 补丁
 ```
 
-目前没有自动化测试；验证方式就是上面的启动检查加 `/bots` 冒烟。欢迎补一套无头
-回归。
+```bash
+# 在仓库根目录
+pnpm install
+pnpm test           # node --check + 无头探针
+```
 
 ## 许可证与致谢
 
