@@ -3,6 +3,12 @@
 只记录真实版本号与已经落地的能力。0.10.0–0.13.0 是开发过程中的工作区版本号；
 0.13.0 是首次把完整工作区提交、并对齐 `package.json` 的版本。
 
+## 0.18.0
+
+- 补上 `sessionController.page()`：从 `ctx.sessionPersistence` 以只读方式打开会话日志，按 `throughSeq` / `beforeSeq` / `maxMessages` 向前分页。
+- 记录保持 DSH 的 `{ type: 'event', event }` 形状与时间顺序，`hasMore` 表示更早还有记录；会话不存在或没有记录时返回空页。
+- 交接备注与记忆回读不再因空实现而退化；新增 `test/probes/paging.tsx` 覆盖正常分页、边界、替换事件、分组与陌生 sessionId。
+
 ## 0.17.0
 
 - 名册改用 `node:fs` 监听 `$DSH_HOME/bot` 目录，`state.json` 变更 120ms 去抖后重读。

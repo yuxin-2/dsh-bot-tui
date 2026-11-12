@@ -3,10 +3,11 @@
 // and dsh-TUI composes no web API layer, so the service is absent there.
 //
 // This row provides the same four methods on the process-local Agent registry
-// (`ctx.agents`), which dsh-TUI itself uses for resume and new sessions. It is
-// a compatibility surface, not an RPC endpoint: no HTTP, no typert lookups, no
-// file receipts. The parts DS Bot needs for a Bot turn are the agent, the
-// prompt, and the agent's own Session.
+// (`ctx.agents`) plus the durable Session log (`ctx.sessionPersistence`), which
+// dsh-TUI itself uses for resume and new sessions. It is a compatibility
+// surface, not an RPC endpoint: no HTTP, no typert lookups, no file receipts.
+// The parts DS Bot needs for a Bot turn are the agent, the prompt, and the
+// agent's own Session; history pages read the stored log without writing it.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
@@ -18,6 +19,63 @@ const notFound = (sessionId, error) => ({
   code: 'session/not-found',
   message: error?.message ?? `session "${sessionId}" is not available`,
 })
+
+// The two message kinds that consume a page's budget. DSH's own history page
+// counts only these (plus append-origin surface copies); boundary and tool
+// events ride along in the returned slice without spending a slot.
+const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
+
+/**
+ * Cut one backwards page from a contiguous, seq-ascending event log.
+ *
+ * Mirrors DSH's history pagination: the page ends at `throughSeq` (inclusive)
+ * or just below `beforeSeq`, walks backwards counting message events, and when
+ * the budget is spent cuts at the earliest seq of that message's group so a
+ * message and the events it was derived from stay together. Records stay in
+ * chronological order, exactly as DSH returns them.
+ */
+function pageOf(events, request) {
+  const maxMessages = Number.isSafeInteger(request.maxMessages) && request.maxMessages > 0
+    ? request.maxMessages
+    : 50
+  if (events.length === 0) {
+    return { records: [], hasMore: false, cursor: Number.isSafeInteger(request.throughSeq) ? request.throughSeq : -1 }
+  }
+  const firstSeq = events[0].seq
+  const lastSeq = events[events.length - 1].seq
+  const through = Number.isSafeInteger(request.throughSeq) ? request.throughSeq : lastSeq
+  const end = Math.min(through + 1, request.beforeSeq ?? through + 1)
+  if (end <= firstSeq) return { records: [], hasMore: false, cursor: through }
+
+  const indexOf = new Map()
+  for (let at = 0; at < events.length; at += 1) indexOf.set(events[at].seq, at)
+  let endIndex = events.length
+  while (endIndex > 0 && events[endIndex - 1].seq >= end) endIndex -= 1
+
+  let cut = 0
+  let count = 0
+  for (let at = endIndex - 1; at >= 0; at -= 1) {
+    const event = events[at]
+    // A replacement copy shadows an older surface range; the transcript's
+    // durable source is the append-origin event, so only those are budgeted.
+    if (!MESSAGE_TYPES.has(event.type) || event.surfaceOp !== 'append') continue
+    count += 1
+    if (count >= maxMessages) {
+      let groupStart = event.seq
+      const sources = event.sourceEventSeqs
+      if (Array.isArray(sources)) {
+        for (const source of sources) if (source < groupStart) groupStart = source
+      }
+      cut = indexOf.get(groupStart) ?? at
+      break
+    }
+  }
+  return {
+    records: events.slice(cut, endIndex).map((event) => ({ type: 'event', event })),
+    hasMore: cut > 0,
+    cursor: through,
+  }
+}
 
 export function apply(ctx) {
   // One resume at a time per session: DS Bot can ask twice while a delivery is
@@ -111,13 +169,39 @@ export function apply(ctx) {
     },
 
     /**
-     * History pages for handoffs and memory. DS Bot reads backwards through a
-     * Session here; a terminal-first pass keeps the live Session's own record
-     * when it exists and reports an empty page otherwise, so a missing read
-     * degrades a handoff instead of breaking a turn.
+     * History pages for handoffs, usage and memory. Reads the stored Session log
+     * through the public persistence seam only: open a `read` handle, take one
+     * contiguous slice, close it. Nothing is appended, flushed or rewritten, so
+     * a page can never race or alter the live Session's own writes.
+     *
+     * DS Bot pages backwards: `throughSeq` is the inclusive log cut, then each
+     * older page passes `beforeSeq` (exclusive) and the newest seq it saw. A
+     * missing or empty Session is an empty page, not an error — a handoff note
+     * degrades instead of failing the turn.
      */
-    async page() {
-      return { records: [], hasMore: false }
+    async page(request = {}, signal) {
+      const empty = { records: [], hasMore: false }
+      if (signal?.aborted) return empty
+      const address = request.address
+      const sessionId = address?.kind === 'subagent' ? address.childSessionId : address?.sessionId
+      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return empty
+      const persistence = ctx.get?.('sessionPersistence')
+      if (persistence === undefined || typeof persistence.open !== 'function') return empty
+
+      let handle
+      try {
+        handle = await persistence.open(String(sessionId), 'read', { signal })
+      } catch {
+        // No durable log for this id (or it was removed while we looked): the
+        // caller asked for history, and there is none to give.
+        return empty
+      }
+      try {
+        const { events } = await handle.read(0, undefined, { signal })
+        return pageOf(Array.isArray(events) ? events : [], request)
+      } finally {
+        await handle.close()
+      }
     },
   }
 

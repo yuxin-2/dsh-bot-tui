@@ -292,8 +292,10 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
 - **Memory is ask, pin, layer, move and forget.** The panel also undoes the last
   tidy and restores rows from the change log. The browser's separate tidy queue and
   per-entry editor are not reproduced; those run on their own inside DS Bot.
-- **`page()` is a stub** returning an empty page: handoff notes and memory
-  read-back degrade; ordinary chat is unaffected.
+- **History pages read the durable Session log.** `page()` pages the stored
+  log through the persistence seam, read-only; a missing or empty log returns
+  an empty page, so handoff notes and memory read-back degrade instead of
+  failing the turn.
 - **The patch above** is required for creating a team from the terminal.
 - The roster watches `$DSH_HOME/bot` for `state.json` changes (120 ms debounce)
   and falls back to polling every 1.5 s on filesystems that cannot watch.
