@@ -17,6 +17,10 @@ import { approvalHistory, recordApproval, subscribeApprovalHistory } from './app
 import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
+// One page of stored history in the detail panel. The DSH reference page size is
+// 50; the panel is a narrow column, so 20 is already more than it can show at
+// once and keeps each read small.
+const HISTORY_PAGE = 20
 
 // The browser's avatar shape set and Bot palette (DS Bot client), copied here so
 // the settings form does not reach into the DS Bot bundle's private modules.
@@ -54,6 +58,7 @@ export const HELP_SECTIONS = [
       ['x', '删除（连按两次确认）'],
       ['X', '清除选中 Bot 的失败记录'],
       ['space', '折叠 / 展开详情'],
+      ['PgUp / PgDn', '详情面板翻页（更早 / 更晚）'],
       ['/', '按名称或标签搜索'],
       ['a', '回答待审批的请求'],
       ['a → h', '查看本终端已决审批'],
@@ -351,6 +356,21 @@ function relative(at) {
   return `${Math.round(hours / 24)}d 前`
 }
 
+// A stored message event carries its text the same way the live activity fold
+// reads it: user messages in `data.content`, assistant messages in
+// `data.message`. Page records are `{ type: 'event', event }` from page().
+function eventText(event) {
+  if (event?.type !== 'user/message' && event?.type !== 'assistant/message') return ''
+  const message = event.type === 'assistant/message' ? event.data?.message : { content: event.data?.content }
+  const blocks = Array.isArray(message?.content) ? message.content : []
+  return blocks
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function reason(result) {
   switch (result?.reason) {
     case 'occupied': return `会话被另一个终端占用（pid ${result.pid}）`
@@ -472,6 +492,7 @@ export function TeamScene(props) {
   const [search, setSearch] = React.useState('')
   const [helpAt, setHelpAt] = React.useState(0)
   const [detailOpen, setDetailOpen] = React.useState(true)
+  const [history, setHistory] = React.useState({ state: 'idle', pages: [], at: 0, error: '' })
   const [memoryEntries, setMemoryEntries] = React.useState([])
   const [memoryIndex, setMemoryIndex] = React.useState(0)
   const [memoryBusy, setMemoryBusy] = React.useState(false)
@@ -590,9 +611,16 @@ export function TeamScene(props) {
   const foreignOf = holderOf
   const listHeight = Math.max(1, Math.min(count, rows - 11))
   const offset = Math.max(0, Math.min(index - listHeight + 1, count - listHeight))
-  const helpHeight = Math.max(1, rows - 8)
+  const helpHeight = Math.max(1, rows - 6)
   const helpMax = Math.max(0, HELP_ENTRIES.length - helpHeight)
   const helpTop = Math.min(helpAt, helpMax)
+
+  // A history page belongs to one Session. Moving the cursor starts the detail
+  // over, so the next PgUp reads that Bot's newest page, never the last Bot's
+  // leftover pages.
+  React.useEffect(() => {
+    setHistory({ state: 'idle', pages: [], at: 0, error: '' })
+  }, [current?.sessionId])
 
   const leave = (sessionId) => {
     markSessionSeen(sessionId ?? channel.sessionId)
@@ -2375,6 +2403,116 @@ export function TeamScene(props) {
       : `${bot.name} 没有被本终端挂着的后台会话。`)
   }
 
+  // The page() service is provided by this package's controller row. The DS Bot
+  // runtime carries the cordis context, so reach it there; a runtime without it
+  // degrades to a clear message instead of an empty panel.
+  const pageController = () => {
+    const rt = runtime()
+    const ctx = rt?.ctx
+    const controller = typeof ctx?.get === 'function'
+      ? ctx.get('sessionController')
+      : ctx?.sessionController ?? rt?.sessionController
+    return typeof controller?.page === 'function' ? controller : undefined
+  }
+
+  const historyMessage = (record) => {
+    const event = record?.event ?? record
+    const text = eventText(event)
+    if (text === '') return undefined
+    return {
+      seq: Number(event.seq),
+      at: Number(event.time ?? Date.now()),
+      role: event.type === 'user/message' ? 'user' : 'bot',
+      text,
+    }
+  }
+
+  const readHistoryPage = async (beforeSeq, mode) => {
+    const controller = pageController()
+    if (controller === undefined) {
+      setHistory({ state: 'unsupported', pages: [], at: 0, error: '' })
+      return
+    }
+    const sessionId = current?.sessionId
+    if (sessionId === undefined || sessionId === null || String(sessionId) === '') {
+      setHistory({ state: 'empty', pages: [], at: 0, error: '' })
+      return
+    }
+    const previous = history
+    setHistory({ ...previous, state: 'loading', error: '' })
+    try {
+      const result = await controller.page({
+        address: { kind: 'session', sessionId: String(sessionId) },
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        maxMessages: HISTORY_PAGE,
+      })
+      const messages = []
+      let firstSeq
+      for (const record of Array.isArray(result?.records) ? result.records : []) {
+        const event = record?.event ?? record
+        if (firstSeq === undefined && event?.seq !== undefined) firstSeq = Number(event.seq)
+        const message = historyMessage(record)
+        if (message !== undefined) messages.push(message)
+      }
+      if (messages.length === 0) {
+        // A missing or empty log is an answer, not an error: say so instead of
+        // leaving the panel blank.
+        if (mode === 'older') setHistory({ ...previous, state: 'end', error: '' })
+        else setHistory({ state: 'empty', pages: [], at: 0, error: '' })
+        return
+      }
+      // The first record's seq is the exclusive cut for the next older page.
+      const page = { messages, firstSeq, hasMore: result?.hasMore === true }
+      const pages = mode === 'older' ? [...previous.pages, page] : [page]
+      const at = mode === 'older' ? pages.length - 1 : 0
+      setHistory({ state: page.hasMore ? 'ready' : 'end', pages, at, error: '' })
+    } catch (error) {
+      const detail = String(error?.message ?? error)
+      if (mode === 'older') {
+        setHistory({
+          ...previous,
+          state: previous.pages.length === 0 ? 'error' : 'ready',
+          error: `读取更早失败：${detail}`,
+        })
+      } else {
+        setHistory({ state: 'error', pages: [], at: 0, error: `读取历史失败：${detail}` })
+      }
+    }
+  }
+
+  const turnHistory = async (direction) => {
+    if (current === undefined || !detailOpen || history.state === 'loading') return
+    if (direction > 0) {
+      const pages = history.pages
+      if (pages.length === 0) {
+        await readHistoryPage(undefined, 'newest')
+        return
+      }
+      const at = history.at
+      const page = pages[at]
+      if (page === undefined) return
+      if (at < pages.length - 1) {
+        // Already read: just move the window, no request.
+        setHistory({ ...history, state: pages[at + 1]?.hasMore ? 'ready' : 'end', at: at + 1, error: '' })
+        return
+      }
+      if (page.hasMore !== true) {
+        setHistory({ ...history, state: 'end', error: '' })
+        return
+      }
+      await readHistoryPage(page.firstSeq, 'older')
+      return
+    }
+    // Newer: walk back toward the newest page; at the newest, return to live.
+    if (history.pages.length === 0) return
+    if (history.at > 0) {
+      const at = history.at - 1
+      setHistory({ ...history, state: history.pages[at]?.hasMore ? 'ready' : 'end', at, error: '' })
+      return
+    }
+    setHistory({ state: 'idle', pages: [], at: 0, error: '' })
+  }
+
   useInput((input, key) => {
     if (mode === 'help') {
       if (key.escape || input === 'q' || input === '?') {
@@ -3329,6 +3467,10 @@ export function TeamScene(props) {
       // confirmation screen must not delete a Bot.
       return
     }
+    if ((key.pageUp || key.pageDown) && detailOpen && current !== undefined) {
+      void turnHistory(key.pageUp ? 1 : -1)
+      return
+    }
     if (input === 'S') {
       if (busy) return
       if (working === 0) {
@@ -3575,6 +3717,25 @@ export function TeamScene(props) {
     : current.live.status === 'idle'
     ? `最后活动 ${current.live.lastAt === 0 ? '—' : relative(current.live.lastAt)}`
     : `已运行 ${elapsed(current.live.since)}`
+  const historyPage = history.pages[history.at]
+  const historyMessages = historyPage?.messages ?? []
+  const showHistory = historyPage !== undefined
+    && (history.state === 'ready' || history.state === 'end' || history.state === 'loading')
+  const historyHead = (() => {
+    if (history.state === 'idle') return null
+    if (history.state === 'unsupported') return '历史不可用：当前运行时没有 page 能力'
+    if (history.state === 'empty') return '第 1 页 · 没有更早的记录'
+    if (history.state === 'error') return history.error
+    if (history.state === 'loading') return `第 ${history.pages.length + 1} 页 · 读取中…`
+    const where = historyPage?.hasMore ? '还有更早' : '已到最早'
+    const page = `历史 · 第 ${history.at + 1} 页 · ${where}`
+    return history.error === '' ? page : `${page} · ${history.error}`
+  })()
+  // One line per message keeps a full page inside the panel; a narrow terminal
+  // shows the tail of the page rather than pushing the footer off screen.
+  const historyVisible = Math.max(3, Math.min(HISTORY_PAGE, rows - 16))
+  const historyShown = historyMessages.slice(Math.max(0, historyMessages.length - historyVisible))
+  const detailShown = showHistory ? historyMessages[historyMessages.length - 1] : detailLatest
   const detailWidth = Math.min(48, Math.max(32, columns - 48))
   const detailWide = current !== undefined && columns >= 100
   const detailPanel = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column' },
@@ -3598,18 +3759,32 @@ export function TeamScene(props) {
       ? null
       : h(Text, { color: 'warning' }, truncate(`占用：pid ${foreignOf(current)}`, Math.max(8, detailWidth - 2))),
     capabilityNote === undefined ? null : h(Text, { color: 'warning' }, truncate(capabilityNote, Math.max(8, detailWidth - 2))),
-    h(Text, { color: 'subtle' }, '最近消息'),
-    detailMessages.length === 0
-      ? h(Text, { color: 'inactive' }, '暂无消息')
-      : detailMessages.map((message, at) => h(Box, { key: `${message.at}-${at}`, flexDirection: 'column' },
-        h(Text, null,
+    historyHead === null ? null : h(Text, { color: history.state === 'error' || history.error !== '' ? 'error' : 'accent' }, truncate(historyHead, Math.max(8, detailWidth - 2))),
+    showHistory
+      ? h(Box, { key: 'history', flexDirection: 'column' },
+        historyShown.map((message, at) => h(Box, { key: `${message.seq}-${at}`, flexDirection: 'row' },
           h(Text, { color: message.role === 'user' ? 'accent' : 'success' }, message.role === 'user' ? '你' : 'Bot'),
-          h(Text, { color: 'inactive' }, ` · ${relative(message.at)}`),
-        ),
-        h(Text, { color: 'text' }, truncate(message.text, Math.max(8, detailWidth - 2))),
-      )),
+          h(Text, { color: 'inactive' }, ` ${relative(message.at)} `),
+          h(Text, { color: 'text' }, truncate(message.text, Math.max(8, detailWidth - 14))),
+        )),
+        historyMessages.length > historyShown.length
+          ? h(Text, { color: 'inactive' }, `… 本页更早的 ${historyMessages.length - historyShown.length} 条未显示`)
+          : null,
+      )
+      : h(Box, { key: 'live', flexDirection: 'column' },
+        h(Text, { color: 'subtle' }, '最近消息'),
+        detailMessages.length === 0
+          ? h(Text, { color: 'inactive' }, '暂无消息')
+          : detailMessages.map((message, at) => h(Box, { key: `${message.at}-${at}`, flexDirection: 'column' },
+            h(Text, null,
+              h(Text, { color: message.role === 'user' ? 'accent' : 'success' }, message.role === 'user' ? '你' : 'Bot'),
+              h(Text, { color: 'inactive' }, ` · ${relative(message.at)}`),
+            ),
+            h(Text, { color: 'text' }, truncate(message.text, Math.max(8, detailWidth - 2))),
+          )),
+      ),
     h(Text, { color: 'inactive' }, 'Enter 进入 · m 发消息 · s 停止'),
-    h(Text, { color: 'inactive' }, 'space 折叠'),
+    h(Text, { color: 'inactive' }, 'space 折叠 · PgUp/PgDn 历史'),
   )
   const detailLine = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: detailStatus.color }, truncate([
@@ -3622,11 +3797,12 @@ export function TeamScene(props) {
       current.workDir === '' ? '' : current.workDir,
       current.unread > 0 ? `未读 ${current.unread}` : '',
     ].filter((part) => part !== '').join(' · '), Math.max(8, columns - 2))),
+    historyHead === null ? null : h(Text, { color: history.state === 'error' || history.error !== '' ? 'error' : 'accent' }, truncate(historyHead, Math.max(8, columns - 2))),
     h(Text, { color: 'text' }, truncate([
-      '最近：',
-      detailLatest === undefined
+      showHistory ? '历史：' : '最近：',
+      detailShown === undefined
         ? '暂无消息'
-        : `${detailLatest.role === 'user' ? '你' : 'Bot'}: ${detailLatest.text}`,
+        : `${detailShown.role === 'user' ? '你' : 'Bot'}: ${detailShown.text}`,
     ].join(''), Math.max(8, columns - 2))),
   )
   const detail = !detailOpen || current === undefined ? null : detailWide ? detailPanel : detailLine
@@ -4247,7 +4423,7 @@ export function TeamScene(props) {
         ? h(Text, { color: 'warning' }, 'S 确认停止 · Esc 取消')
         : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
-      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
+      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
