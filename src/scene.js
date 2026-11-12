@@ -96,6 +96,7 @@ export const HELP_SECTIONS = [
     keys: [
       ['e → 记忆', '打开当前 Bot 的记忆面板'],
       ['a', '用自然语言提问增改删条目'],
+      ['Enter', '编辑选中的条目（Ctrl+Enter 换行）'],
       ['p', '置顶 / 取消置顶'],
       ['l', '在私有记忆与团队记忆间移动'],
       ['m', '移动到其它 Bot / 群聊 / 团队记忆'],
@@ -168,8 +169,9 @@ export const MODE_HINTS = {
   'room-permission': '↑↓ 选择 · Enter 应用 · Esc 返回',
   schedules: '↑↓ 选择 · n 新建 · x 删除 · r 刷新 · Esc 返回',
   'schedule-new': 'Enter 下一步 · Esc 取消',
-  memory: '↑↓ 选择 · a 提问 · p 置顶 · l 共享 · m 移动 · t 撤销整理 · h 历史 · x 忘记（再按一次）· r 刷新 · Esc 返回',
+  memory: '↑↓ 选择 · Enter 编辑 · a 提问 · p 置顶 · l 共享 · m 移动 · t 撤销整理 · h 历史 · x 忘记（再按一次）· r 刷新 · Esc 返回',
   'memory-ask': 'Enter 发送 · Esc 取消',
+  'memory-edit': 'Enter 保存 · Ctrl+Enter 换行 · Esc 取消',
   'memory-move': '↑↓ 选择 · Enter 移动 · Esc 返回',
   'memory-history': '↑↓ 选择 · Enter 恢复 · n 更早 · r 刷新 · Esc 返回',
   avatar: '↑↓ 选择 · Enter 应用 · i 图片路径 · x 恢复默认 · Esc 返回',
@@ -479,6 +481,7 @@ export function TeamScene(props) {
   const [memoryHistoryMore, setMemoryHistoryMore] = React.useState(undefined)
   const [memoryHistoryAt, setMemoryHistoryAt] = React.useState(0)
   const [memoryHistoryBusy, setMemoryHistoryBusy] = React.useState(false)
+  const [memoryEditEntry, setMemoryEditEntry] = React.useState(undefined)
   const [pendingForget, setPendingForget] = React.useState(undefined)
   const [pendingForgetAt, setPendingForgetAt] = React.useState(0)
   const [approvalHistoryOpen, setApprovalHistoryOpen] = React.useState(false)
@@ -2072,6 +2075,72 @@ export function TeamScene(props) {
     }
   }
 
+  const saveMemoryEdit = async () => {
+    const entry = memoryEditEntry
+    const text = String(fieldDraft).trim()
+    const rt = runtime()
+    if (entry === undefined || rt === undefined || memoryTarget === undefined) return
+    if (text === '') {
+      setNotice('记忆内容不能为空。')
+      return
+    }
+    // The panel owns exactly one memory place: a Bot's own or team memory, or
+    // one group's memory. An entry that names any other scope did not come from
+    // this panel; refuse instead of writing across the boundary.
+    const allowed = memoryTarget.roomId !== undefined ? ['group'] : ['own', 'team']
+    if (!allowed.includes(entry.scope)) {
+      setNotice('只能编辑当前记忆面板里的条目。')
+      setMode('memory')
+      setMemoryEditEntry(undefined)
+      return
+    }
+    if (text === entry.text) {
+      setMode('memory')
+      setMemoryEditEntry(undefined)
+      setNotice('内容没有变化。')
+      return
+    }
+    setBusy(true)
+    try {
+      await ensureWritable(rt)
+      // DS Bot exposes no single-entry write endpoint. Replace is composed from
+      // the two that exist: add the new line through memory-ask (the only add
+      // surface, keeper-mediated), then remove the old line by its exact text.
+      // Add first: a failed add leaves the old entry intact.
+      const where = entry.scope === 'team'
+        ? '团队记忆'
+        : memoryTarget.roomId !== undefined ? '群聊记忆' : '这个 Bot 的记忆'
+      const asked = await rt.memoryEndpoint('memory-ask', {
+        ...memoryTarget,
+        text: `只在${where}里新增一条，内容必须完全是：${text}。不要修改或删除其它条目。`,
+      })
+      const forgotten = await rt.memoryEndpoint('memory-forget', {
+        ...memoryTarget,
+        scope: entry.scope,
+        topic: entry.topic,
+        text: entry.text,
+      })
+      const view = forgotten ?? asked
+      setMemoryEntries(Array.isArray(view?.entries) ? view.entries : [])
+      setMemorySummary(typeof view?.summary?.text === 'string' ? view.summary.text : '')
+      setMemoryTidy(view?.tidy ?? undefined)
+      setMemoryPlaces(Array.isArray(view?.places) ? view.places : [])
+      setMemoryReport({
+        reply: String(asked?.reply ?? ''),
+        changes: Array.isArray(asked?.changes) ? asked.changes : [],
+      })
+      setFieldDraft('')
+      setMemoryEditEntry(undefined)
+      setMode('memory')
+      setNotice('记忆已更新。')
+    } catch (error) {
+      setNotice(`更新记忆失败：${error?.message ?? error}`)
+      await openMemory(memoryTarget)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const undoMemoryTidy = async () => {
     const rt = runtime()
     if (!rt || memoryTarget === undefined) return
@@ -2943,6 +3012,18 @@ export function TeamScene(props) {
         openMemoryMove(memoryEntries[Math.min(memoryIndex, memoryEntries.length - 1)])
         return
       }
+      if (key.return && !busy) {
+        if (memoryEntries.length === 0) {
+          setNotice('没有可编辑的记忆条目')
+          return
+        }
+        const entry = memoryEntries[Math.min(memoryIndex, memoryEntries.length - 1)]
+        setMemoryEditEntry(entry)
+        setFieldDraft(entry.text)
+        setMode('memory-edit')
+        setNotice('')
+        return
+      }
       if (input === 't') {
         void undoMemoryTidy()
         return
@@ -3021,6 +3102,35 @@ export function TeamScene(props) {
       if (input && key.ctrl !== true && key.meta !== true) {
         const clean = input.replace(/[\r\n]+/g, ' ')
         if (clean !== '') setFieldDraft((at) => (at + clean).slice(0, 400))
+      }
+      return
+    }
+    if (mode === 'memory-edit') {
+      if (key.escape) {
+        setMemoryEditEntry(undefined)
+        setFieldDraft('')
+        setMode('memory')
+        setNotice('')
+        return
+      }
+      if (key.return && key.ctrl === true) {
+        setFieldDraft((at) => (at + '\n').slice(0, 4000))
+        return
+      }
+      if (key.return && !busy) {
+        void saveMemoryEdit()
+        return
+      }
+      if (key.ctrl === true && input === 's') {
+        void saveMemoryEdit()
+        return
+      }
+      if (key.backspace || key.delete) {
+        setFieldDraft((at) => at.slice(0, -1))
+        return
+      }
+      if (input && key.ctrl !== true && key.meta !== true) {
+        setFieldDraft((at) => (at + input).slice(0, 4000))
       }
       return
     }
@@ -3948,7 +4058,7 @@ export function TeamScene(props) {
     ? current?.name
     : rooms.find((room) => room.id === memoryTarget.roomId)?.name
   const memoryView = mode !== 'memory' ? null : h(Box, { key: 'memory', flexDirection: 'column', marginTop: 1 },
-    h(Text, { color: 'accent' }, `${memoryName ?? '?'} 的记忆（a 提问 · p 置顶 · l 共享 · t 撤销整理 · h 历史 · x 忘记 · r 刷新 · Esc 返回）`),
+    h(Text, { color: 'accent' }, `${memoryName ?? '?'} 的记忆（a 提问 · Enter 编辑 · p 置顶 · l 共享 · t 撤销整理 · h 历史 · x 忘记 · r 刷新 · Esc 返回）`),
     memoryTidy === undefined ? null : h(Text, { color: 'inactive' },
       truncate(`上次整理：${new Date(memoryTidy.at).toLocaleString()} · 合并 ${memoryTidy.merged ?? 0} · 移动 ${memoryTidy.moved ?? 0} · 归档 ${memoryTidy.retired ?? 0} · t 撤销`, Math.max(20, columns * 2))),
     memorySummary === '' ? null : h(Text, { color: 'inactive' }, truncate(`摘要：${memorySummary}`, Math.max(20, columns * 2))),
@@ -3996,6 +4106,23 @@ export function TeamScene(props) {
     h(Text, null, h(Text, { color: 'accent' }, ' ❯ '), h(Text, null, fieldDraft === '' ? ' ' : fieldDraft)),
   )
 
+  const memoryEditLines = fieldDraft.split('\n')
+  const memoryEditHeight = Math.max(3, Math.min(10, rows - 14))
+  const memoryEditTop = Math.max(0, memoryEditLines.length - memoryEditHeight)
+  const memoryEditScope = memoryEditEntry?.scope === 'team'
+    ? '团队记忆'
+    : memoryEditEntry?.scope === 'group' ? '群聊记忆' : 'Bot 自己的记忆'
+  const memoryEditView = mode !== 'memory-edit' ? null : h(Box, { key: 'memory-edit', flexDirection: 'column', marginTop: 1 },
+    h(Text, { color: 'accent' }, `编辑记忆（${memoryName ?? '?'} · Enter 保存 · Ctrl+Enter 换行 · Ctrl+S 保存 · Esc 取消）`),
+    h(Text, { color: 'inactive' }, truncate(`目标：${memoryEditScope} · 原：${memoryEditEntry?.text ?? ''}`, Math.max(8, columns - 4))),
+    ...memoryEditLines.slice(memoryEditTop, memoryEditTop + memoryEditHeight).map((line, at) => {
+      const index = memoryEditTop + at
+      const caret = index === memoryEditLines.length - 1
+      return h(Text, { key: index, color: caret ? 'text' : 'subtle' }, ` ❯ ${caret && line === '' ? ' ' : truncate(line, Math.max(6, columns - 6))}`)
+    }),
+    busy ? h(Text, { color: 'accent' }, '保存中…') : null,
+  )
+
   const historyAt = Math.min(memoryHistoryAt, Math.max(0, memoryHistory.length - 1))
   const historyOffset = Math.max(0, Math.min(historyAt - listHeight + 1, memoryHistory.length - listHeight))
   const memoryHistoryView = mode !== 'memory-history' ? null : h(Box, { key: 'memory-history', flexDirection: 'column', marginTop: 1 },
@@ -4034,7 +4161,7 @@ export function TeamScene(props) {
     }),
   )
 
-  const fullViewNode = approveView ?? capView ?? helpView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
+  const fullViewNode = approveView ?? capView ?? helpView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryEditView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
   const fullFooter = fullViewNode === null ? null : h(Box, { key: 'full-footer', flexDirection: 'column', marginTop: 1 },
     busy ? h(Text, { color: 'accent' }, '处理中…') : null,
     notice === '' ? null : h(Text, { color: 'warning' }, notice),

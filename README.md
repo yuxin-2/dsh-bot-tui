@@ -158,12 +158,13 @@ the Computer panel: the global switch, provider retry, each Bot's level, and the
 app grants that can be revoked.
 
 The memory panel (`e` → Memory) is a two-way editor: `a` asks the keeper Bot to
-add, edit or remove entries in plain language, `p` pins or unpins the selected
-entry, `l` moves it between the Bot's own memory and the team's shared memory,
-`m` moves the selected entry to another Bot, group or the team memory, `t` undoes
-the last tidy, and `x` forgets it. `h` opens the change log; `Enter` restores a
-change, `n` loads older rows. Schedules support daily, weekly (pick days 1–7),
-repeat-every, and one-shot times.
+add, edit or remove entries in plain language, `Enter` edits the selected entry
+(Ctrl+Enter for a new line, Enter or Ctrl+S saves, Esc cancels), `p` pins or
+unpins the selected entry, `l` moves it between the Bot's own memory and the
+team's shared memory, `m` moves the selected entry to another Bot, group or the
+team memory, `t` undoes the last tidy, and `x` forgets it. `h` opens the change
+log; `Enter` restores a change, `n` loads older rows. Schedules support daily,
+weekly (pick days 1–7), repeat-every, and one-shot times.
 
 Rows show live state: `工作中 Ns` (a turn is running), `待回答` (a card is
 waiting for you), `空闲`, `●新` (a reply arrived since you last opened it), and
@@ -291,9 +292,11 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
   checklist (2–12 members); the browser's drag-and-drop and per-member cards are
   not reproduced. Group settings also cover permission, section, notice, memory and
   schedules.
-- **Memory is ask, pin, layer, move and forget.** The panel also undoes the last
-  tidy and restores rows from the change log. The browser's separate tidy queue and
-  per-entry editor are not reproduced; those run on their own inside DS Bot.
+- **Memory is ask, pin, layer, move, edit and forget.** The panel also undoes
+  the last tidy and restores rows from the change log; editing one entry is
+  composed from the ask and forget endpoints, since DS Bot has no single-entry
+  write endpoint. The browser's separate tidy queue is not reproduced; it runs
+  on its own inside DS Bot.
 - **History pages read the durable Session log.** `page()` pages the stored
   log through the persistence seam, read-only; a missing or empty log returns
   an empty page, so handoff notes and memory read-back degrade instead of
