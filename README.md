@@ -136,6 +136,7 @@ h        approval history (in the a panel)
 p        approve pending MCPs       v      mount/unmount capabilities
 u        release this terminal's claim
 space    collapse/expand details
+←/→      collapse/expand the selected group
 PgUp/PgDn  detail history (older/newer)
 ?        help overlay
 y        token usage for this Bot   o      Computer panel

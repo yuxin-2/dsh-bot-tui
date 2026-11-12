@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { activityOf, clearFailure, markSeen, subscribe, unreadOf } from './activity.js'
 import { approvalHistory, recordApproval, subscribeApprovalHistory } from './approvalHistory.js'
+import { readCollapsed, writeCollapsed } from './collapse.js'
 import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
@@ -58,6 +59,7 @@ export const HELP_SECTIONS = [
       ['x', '删除（连按两次确认）'],
       ['X', '清除选中 Bot 的失败记录'],
       ['space', '折叠 / 展开详情'],
+      ['← / →', '折叠 / 展开当前分组'],
       ['PgUp / PgDn', '详情面板翻页（更早 / 更晚）'],
       ['/', '按名称或标签搜索'],
       ['a', '回答待审批的请求'],
@@ -438,6 +440,8 @@ export function TeamScene(props) {
 
   const [team, setTeam] = React.useState(readTeam)
   const [selectedId, setSelectedId] = React.useState(undefined)
+  const [collapsed, setCollapsed] = React.useState(readCollapsed)
+  const [collapseReturn, setCollapseReturn] = React.useState({})
   const [notice, setNotice] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [mode, setMode] = React.useState('list')
@@ -559,9 +563,34 @@ export function TeamScene(props) {
       return rank(a) - rank(b) || a.name.localeCompare(b.name)
     })
   const needle = search.trim().toLowerCase()
-  const bots = needle === ''
-    ? teamBots
-    : teamBots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(needle))
+  const searching = needle !== ''
+  const matches = searching
+    ? teamBots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(needle))
+    : teamBots
+  const sectionLabel = (id) => team.sections.find((section) => section.id === id)?.name ?? '无'
+  // A search is a magnifier, not a filter over the collapsed view: every hit is
+  // shown, and the user's collapsed set is applied again when the search ends.
+  const sectionIds = team.sections.map((section) => section.id)
+  const knownSections = new Set(sectionIds)
+  for (const bot of matches) {
+    if (bot.sectionId !== undefined && !knownSections.has(bot.sectionId)) {
+      knownSections.add(bot.sectionId)
+      sectionIds.push(bot.sectionId)
+    }
+  }
+  const displayItems = []
+  for (const id of sectionIds) {
+    const list = matches.filter((bot) => bot.sectionId === id)
+    if (list.length === 0) continue
+    const isCollapsed = !searching && collapsed.has(id)
+    displayItems.push({ kind: 'section', id, name: sectionLabel(id), count: list.length, collapsed: isCollapsed })
+    if (isCollapsed) continue
+    for (const bot of list) displayItems.push({ kind: 'bot', bot })
+  }
+  for (const bot of matches) {
+    if (bot.sectionId === undefined) displayItems.push({ kind: 'bot', bot })
+  }
+  const bots = displayItems.filter((item) => item.kind === 'bot').map((item) => item.bot)
 
   const count = bots.length
   const total = teamBots.length
@@ -586,12 +615,20 @@ export function TeamScene(props) {
   const stopAllTargets = teamBots.filter((bot) => bot.live?.status === 'working')
   const waiting = teamBots.filter((bot) => bot.live?.status === 'needs-input').length
   const unread = teamBots.reduce((total, bot) => total + bot.unread, 0)
-  // Selection is the Bot id, not the row number: live status re-ranks the
-  // list every second, and an index would silently move the cursor to
-  // whichever Bot slid into the old row.
-  const found = selectedId === undefined ? 0 : bots.findIndex((bot) => bot.id === selectedId)
-  const index = found >= 0 ? found : 0
-  const current = count === 0 ? undefined : bots[index]
+  // Focus is a row key: either a Bot id or `section:<id>`. Headers are focusable
+  // so a collapsed group can be opened again without a member to stand on.
+  // Hidden Bots are not in displayItems at all, so the cursor cannot land on
+  // them; expanding restores the Bot remembered for that section.
+  const sectionKey = (id) => `section:${id}`
+  const firstBotAt = displayItems.findIndex((item) => item.kind === 'bot')
+  const foundAt = selectedId === undefined
+    ? -1
+    : displayItems.findIndex((item) => item.kind === 'section'
+      ? sectionKey(item.id) === selectedId
+      : item.bot.id === selectedId)
+  const focusAt = foundAt >= 0 ? foundAt : (firstBotAt >= 0 ? firstBotAt : 0)
+  const focusItem = displayItems[focusAt]
+  const current = focusItem?.kind === 'bot' ? focusItem.bot : undefined
   const here = teamBots.find((bot) =>
     bot.id === channel.sessionId ||
     bot.sessionId === channel.sessionId ||
@@ -609,8 +646,8 @@ export function TeamScene(props) {
   const heldByThisTerminal = (bot) =>
     [bot.sessionId, ...bot.segments].some((id) => mounts.get(String(id)) === process.pid)
   const foreignOf = holderOf
-  const listHeight = Math.max(1, Math.min(count, rows - 11))
-  const offset = Math.max(0, Math.min(index - listHeight + 1, count - listHeight))
+  const listHeight = Math.max(1, Math.min(displayItems.length, rows - 11))
+  const offset = Math.max(0, Math.min(focusAt - listHeight + 1, displayItems.length - listHeight))
   const helpHeight = Math.max(1, rows - 6)
   const helpMax = Math.max(0, HELP_ENTRIES.length - helpHeight)
   const helpTop = Math.min(helpAt, helpMax)
@@ -820,7 +857,7 @@ export function TeamScene(props) {
 
   const createChief = async () => {
     if (busy) return
-    if (count > 0) {
+    if (total > 0) {
       setNotice('团队已经在了：按 c 新建 Bot，或让 Chief 来建。')
       return
     }
@@ -940,7 +977,7 @@ export function TeamScene(props) {
   // ── Bot settings ──────────────────────────────────────────────────────────
   // The browser's Bot settings page, as a keyboard form. Each text row opens a
   // one-field editor; switches apply at once; the model row opens the catalog.
-  const sectionName = (id) => (id === undefined ? '无' : team.sections.find((section) => section.id === id)?.name ?? '无')
+  const sectionName = (id) => (id === undefined ? '无' : sectionLabel(id))
   const permissionCatalog = () => {
     const rt = runtime()
     try {
@@ -2362,12 +2399,55 @@ export function TeamScene(props) {
   }
 
   const move = (delta) => {
-    if (count === 0) return
-    const at = Math.max(0, Math.min(count - 1, index + delta))
-    const bot = bots[at]
-    if (bot !== undefined) setSelectedId(bot.id)
+    if (displayItems.length === 0) return
+    const at = Math.max(0, Math.min(displayItems.length - 1, focusAt + delta))
+    const item = displayItems[at]
+    if (item === undefined) return
+    setSelectedId(item.kind === 'section' ? sectionKey(item.id) : item.bot.id)
     setPendingDelete(undefined)
     setNotice('')
+  }
+
+  const setSectionCollapsed = (sectionId, collapse) => {
+    if (sectionId === undefined) {
+      setNotice('这个 Bot 不在分组里。')
+      return
+    }
+    if (searching) {
+      setNotice('搜索时分组保持展开。')
+      return
+    }
+    const isCollapsed = collapsed.has(sectionId)
+    if (collapse === isCollapsed) {
+      setNotice(isCollapsed ? '该分组已经折叠。' : '该分组已经展开。')
+      return
+    }
+    const next = new Set(collapsed)
+    if (collapse) next.add(sectionId)
+    else next.delete(sectionId)
+    setCollapsed(next)
+    writeCollapsed(next)
+    if (collapse) {
+      // Remember the member to return to, then focus the header: a collapsed
+      // group has no member left for the cursor to stand on.
+      if (focusItem?.kind === 'bot' && focusItem.bot.sectionId === sectionId) {
+        const back = focusItem.bot.id
+        setCollapseReturn((prev) => ({ ...prev, [sectionId]: back }))
+      }
+      setSelectedId(sectionKey(sectionId))
+      setNotice(`已折叠 ${sectionName(sectionId)}。`)
+    } else {
+      const back = collapseReturn[sectionId]
+      const candidate = back === undefined ? undefined : matches.find((bot) => bot.id === back)
+      if (candidate !== undefined) setSelectedId(candidate.id)
+      setCollapseReturn((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, sectionId)) return prev
+        const nextReturn = { ...prev }
+        delete nextReturn[sectionId]
+        return nextReturn
+      })
+      setNotice(`已展开 ${sectionName(sectionId)}。`)
+    }
   }
 
   const release = async (bot) => {
@@ -3471,6 +3551,16 @@ export function TeamScene(props) {
       void turnHistory(key.pageUp ? 1 : -1)
       return
     }
+    if ((key.leftArrow || key.rightArrow) && displayItems.length > 0) {
+      const sectionId = focusItem?.kind === 'section' ? focusItem.id : current?.sectionId
+      setSectionCollapsed(sectionId, key.leftArrow)
+      return
+    }
+    if (key.return && focusItem?.kind === 'section') {
+      const isCollapsed = !searching && collapsed.has(focusItem.id)
+      setSectionCollapsed(focusItem.id, !isCollapsed)
+      return
+    }
     if (input === 'S') {
       if (busy) return
       if (working === 0) {
@@ -3667,7 +3757,7 @@ export function TeamScene(props) {
   const header = h(Box, { key: 'header', flexDirection: 'column' },
     h(Text, null,
       h(Text, { bold: true, color: 'accent' }, ' DS Bot '),
-      h(Text, { color: 'subtle' }, ` ${total} 位${needle === '' ? '' : ` · 筛选 ${count}`}`),
+      h(Text, { color: 'subtle' }, ` ${total} 位${needle === '' ? '' : ` · 筛选 ${matches.length}`}`),
       rooms.length > 0 ? h(Text, { color: 'subtle' }, ` · ${rooms.length} 群`) : null,
       working > 0 ? h(Text, { color: 'accent' }, ` · 工作 ${working}`) : null,
       waiting > 0 ? h(Text, { color: 'warning' }, ` · 待回答 ${waiting}`) : null,
@@ -3686,14 +3776,19 @@ export function TeamScene(props) {
   const rowsView = []
   const showRole = columns >= 56
   const showStatus = columns >= 42
-  for (let at = offset; at < Math.min(offset + listHeight, count); at += 1) {
-    const bot = bots[at]
-    const selected = at === index
-    const status = statusOf(bot)
-    const previous = at > 0 ? bots[at - 1] : undefined
-    if (bot.sectionId !== undefined && (previous === undefined || previous.sectionId !== bot.sectionId)) {
-      rowsView.push(h(Text, { key: `section-${bot.sectionId}`, color: 'inactive' }, `── ${sectionName(bot.sectionId)}`))
+  for (let at = offset; at < Math.min(offset + listHeight, displayItems.length); at += 1) {
+    const item = displayItems[at]
+    const selected = at === focusAt
+    if (item.kind === 'section') {
+      rowsView.push(h(Box, { key: `section-${item.id}`, flexDirection: 'row' },
+        h(Text, { color: selected ? 'accent' : item.collapsed ? 'inactive' : 'text' }, selected ? ' ❯ ' : '   '),
+        h(Text, { color: item.collapsed ? 'inactive' : 'accent' }, `${item.collapsed ? '▸' : '▾'} ${item.name}`),
+        h(Text, { color: 'subtle' }, ` (${item.count})`),
+      ))
+      continue
     }
+    const bot = item.bot
+    const status = statusOf(bot)
     rowsView.push(h(Box, { key: bot.id, flexDirection: 'row' },
       h(Text, { color: selected ? 'accent' : 'subtle' }, selected ? ' ❯ ' : '   '),
       h(Text, { color: bot.main ? 'accent' : 'text' }, bot.main ? `${MAIN_MARK} ` : '  '),
@@ -4423,7 +4518,7 @@ export function TeamScene(props) {
         ? h(Text, { color: 'warning' }, 'S 确认停止 · Esc 取消')
         : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
-      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
+      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · ←/→ 分组 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
@@ -4436,7 +4531,7 @@ export function TeamScene(props) {
 
   const empty = total === 0
     ? h(Text, { color: 'subtle' }, '还没有团队 · 按 n 创建第一位 Main Bot（Chief）')
-    : count === 0
+    : displayItems.length === 0
     ? h(Text, { color: 'subtle' }, `没有匹配「${search}」的 Bot · Esc 清除`)
     : h(Box, { flexDirection: 'column' }, rowsView)
 
