@@ -51,7 +51,7 @@ export const HELP_SECTIONS = [
     title: '名册',
     keys: [
       ['↑/↓ 或 k/j', '移动光标'],
-      ['g / G', '跳到首位 / 末位'],
+      ['g / G', '跳到下一个待回答 / 新回复的 Bot'],
       ['Enter', '进入该 Bot 的聊天'],
       ['m', '不离开面板给 Bot 发消息'],
       ['s', '停止该 Bot 当前的回合'],
@@ -152,7 +152,7 @@ const HELP_ENTRIES = HELP_SECTIONS.flatMap((section) => [
 ])
 
 export const MODE_HINTS = {
-  list: '↑↓ 选择 · Enter 聊天 · m 发消息 · r 刷新 · / 搜索 · ? 帮助',
+  list: '↑↓ 选择 · Enter 聊天 · m 发消息 · g/G 跳转 · r 刷新 · / 搜索 · ? 帮助',
   search: '输入筛选 · Enter 确认 · Esc 清除',
   help: '↑↓ 滚动 · Esc 返回',
   create: 'Enter 创建 · Esc 取消',
@@ -646,6 +646,13 @@ export function TeamScene(props) {
   const heldByThisTerminal = (bot) =>
     [bot.sessionId, ...bot.segments].some((id) => mounts.get(String(id)) === process.pid)
   const foreignOf = holderOf
+  // Jump targets are visible rows only: a filtered-out or folded-away Bot is
+  // not somewhere the cursor can go. An unread mark the row does not actually
+  // show (the terminal's own Bot, or one held by another window) is not a jump
+  // target either.
+  const showsUnread = (bot) => bot.unread > 0 && here?.id !== bot.id && foreignOf(bot) === undefined
+  const needsInputCount = bots.filter((bot) => bot.live?.status === 'needs-input').length
+  const unreadCount = bots.filter(showsUnread).length
   const listHeight = Math.max(1, Math.min(displayItems.length, rows - 11))
   const offset = Math.max(0, Math.min(focusAt - listHeight + 1, displayItems.length - listHeight))
   const helpHeight = Math.max(1, rows - 6)
@@ -2408,6 +2415,27 @@ export function TeamScene(props) {
     setNotice('')
   }
 
+  const jumpTo = (kind) => {
+    const targets = []
+    bots.forEach((bot, at) => {
+      const hit = kind === 'needs-input' ? bot.live?.status === 'needs-input' : showsUnread(bot)
+      if (hit) targets.push(at)
+    })
+    if (targets.length === 0) {
+      setNotice(kind === 'needs-input' ? '没有待回答的 Bot。' : '没有新回复的 Bot。')
+      return
+    }
+    // Start after the focused row; a header counts as the bots above it, and
+    // running off the end wraps to the first target.
+    const at = current === undefined
+      ? displayItems.slice(0, focusAt).filter((item) => item.kind === 'bot').length - 1
+      : bots.findIndex((bot) => bot.id === current.id)
+    const next = targets.find((target) => target > at) ?? targets[0]
+    setSelectedId(bots[next].id)
+    setPendingDelete(undefined)
+    setNotice('')
+  }
+
   const setSectionCollapsed = (sectionId, collapse) => {
     if (sectionId === undefined) {
       setNotice('这个 Bot 不在分组里。')
@@ -3633,11 +3661,11 @@ export function TeamScene(props) {
       return
     }
     if (input === 'g') {
-      if (bots[0] !== undefined) setSelectedId(bots[0].id)
+      jumpTo('needs-input')
       return
     }
     if (input === 'G') {
-      if (bots[count - 1] !== undefined) setSelectedId(bots[count - 1].id)
+      jumpTo('unread')
       return
     }
     if (input === 'n') {
@@ -4514,6 +4542,9 @@ export function TeamScene(props) {
         ? h(Text, null, h(Text, { color: 'accent' }, ' 搜索 '), h(Text, null, search === '' ? ' ' : search))
         : null,
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
+      needsInputCount + unreadCount > 0
+        ? h(Text, { color: 'inactive' }, `还有 ${needsInputCount} 个待回答 / ${unreadCount} 个新回复 · g/G 跳转`)
+        : null,
       stopAllPending
         ? h(Text, { color: 'warning' }, 'S 确认停止 · Esc 取消')
         : h(Text, { color: 'subtle' }, modeHint(mode)),

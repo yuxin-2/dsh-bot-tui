@@ -125,6 +125,7 @@ dsh --profile dsh-tui
 
 ```
 ↑/↓      move                      Enter   open that Bot's chat
+g/G      next needs-input / unread Bot
 m        message without leaving    c      create a Bot (name,role,brief)
 s        stop that Bot's turn       x      delete (press twice)
 X        clear the selected failure
