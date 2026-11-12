@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { activityOf, markSeen, subscribe, unreadOf } from './activity.js'
+import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
 
@@ -479,8 +480,10 @@ export function TeamScene(props) {
   const { columns, rows } = useTerminalSize()
 
   React.useEffect(() => {
-    const timer = setInterval(() => setTeam(readTeam()), 1000)
-    return () => clearInterval(timer)
+    // Directory watch, not a per-second poll: DS Bot swaps state.json in with a
+    // rename, so the directory is the durable thing to watch (see watch.js).
+    const watcher = watchTeam(() => setTeam(readTeam()), { home: join(dshHome(), 'bot') })
+    return () => watcher.close()
   }, [])
   React.useEffect(() => subscribe(rerender), [])
 

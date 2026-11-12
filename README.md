@@ -295,8 +295,8 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
 - **`page()` is a stub** returning an empty page: handoff notes and memory
   read-back degrade; ordinary chat is unaffected.
 - **The patch above** is required for creating a team from the terminal.
-- The roster polls `state.json` once per second while open; it is not a live
-  push channel.
+- The roster watches `$DSH_HOME/bot` for `state.json` changes (120 ms debounce)
+  and falls back to polling every 1.5 s on filesystems that cannot watch.
 
 ## Development
 
