@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "io.github.dsh-bot-tui",
   "name": "DS Bot for dsh-TUI",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "manifestVersion": "0.15",
   "facets": {
     "host": {

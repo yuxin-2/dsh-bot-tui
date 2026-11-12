@@ -50,6 +50,7 @@ export const HELP_SECTIONS = [
       ['Enter', '进入该 Bot 的聊天'],
       ['m', '不离开面板给 Bot 发消息'],
       ['s', '停止该 Bot 当前的回合'],
+      ['S', '停止所有工作中的 Bot（先确认）'],
       ['x', '删除（连按两次确认）'],
       ['X', '清除选中 Bot 的失败记录'],
       ['space', '折叠 / 展开详情'],
@@ -482,6 +483,7 @@ export function TeamScene(props) {
   const [memoryHistoryAt, setMemoryHistoryAt] = React.useState(0)
   const [memoryHistoryBusy, setMemoryHistoryBusy] = React.useState(false)
   const [memoryEditEntry, setMemoryEditEntry] = React.useState(undefined)
+  const [stopAllPending, setStopAllPending] = React.useState(false)
   const [pendingForget, setPendingForget] = React.useState(undefined)
   const [pendingForgetAt, setPendingForgetAt] = React.useState(0)
   const [approvalHistoryOpen, setApprovalHistoryOpen] = React.useState(false)
@@ -560,6 +562,7 @@ export function TeamScene(props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const working = teamBots.filter((bot) => bot.live?.status === 'working').length
+  const stopAllTargets = teamBots.filter((bot) => bot.live?.status === 'working')
   const waiting = teamBots.filter((bot) => bot.live?.status === 'needs-input').length
   const unread = teamBots.reduce((total, bot) => total + bot.unread, 0)
   // Selection is the Bot id, not the row number: live status re-ranks the
@@ -685,6 +688,43 @@ export function TeamScene(props) {
     } catch (error) {
       setNotice(`停止失败：${error?.message ?? error}`)
     }
+  }
+
+  const stopAllWorking = async () => {
+    const rt = runtime()
+    setStopAllPending(false)
+    if (typeof rt?.stopChat !== 'function') {
+      setNotice('无法停止：DS Bot 运行时未就绪')
+      return
+    }
+    // Re-read at confirm time: a turn may have ended while the confirmation was
+    // on screen, and the summary must name what was actually stopped.
+    const targets = teamBots.filter((bot) => bot.live?.status === 'working')
+    if (targets.length === 0) {
+      setNotice('没有正在工作的 Bot。')
+      return
+    }
+    setBusy(true)
+    setNotice('')
+    let stopped = 0
+    let idle = 0
+    const failed = []
+    for (const bot of targets) {
+      try {
+        // One Bot's failure must not abandon the rest of the batch.
+        const result = await rt.stopChat(bot.id)
+        if (result === false) idle += 1
+        else stopped += 1
+      } catch (error) {
+        failed.push(`${bot.name}：${error?.message ?? error}`)
+      }
+    }
+    setTeam(readTeam())
+    setBusy(false)
+    const parts = [`已停止 ${stopped} 个`]
+    if (idle > 0) parts.push(`${idle} 个已空闲`)
+    if (failed.length > 0) parts.push(`失败 ${failed.length} 个（${failed.join('；')}）`)
+    setNotice(`${parts.join(' · ')}。`)
   }
 
   const deleteBot = async (bot) => {
@@ -3275,6 +3315,32 @@ export function TeamScene(props) {
       return
     }
 
+    if (stopAllPending) {
+      if (key.escape) {
+        setStopAllPending(false)
+        setNotice('')
+        return
+      }
+      if (input === 'S') {
+        void stopAllWorking()
+        return
+      }
+      // Swallow everything else while the batch is armed: a stray `x` on the
+      // confirmation screen must not delete a Bot.
+      return
+    }
+    if (input === 'S') {
+      if (busy) return
+      if (working === 0) {
+        setNotice('没有正在工作的 Bot。')
+        return
+      }
+      setStopAllPending(true)
+      setPendingDelete(undefined)
+      setNotice('')
+      return
+    }
+
     if (key.escape || input === 'q') {
       if (search.trim() !== '') {
         setSearch('')
@@ -4177,7 +4243,9 @@ export function TeamScene(props) {
         ? h(Text, null, h(Text, { color: 'accent' }, ' 搜索 '), h(Text, null, search === '' ? ' ' : search))
         : null,
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
-      h(Text, { color: 'subtle' }, modeHint(mode)),
+      stopAllPending
+        ? h(Text, { color: 'warning' }, 'S 确认停止 · Esc 取消')
+        : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
       h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
@@ -4202,10 +4270,16 @@ export function TeamScene(props) {
       h(Box, { flexDirection: 'column', width: detailWidth, paddingLeft: 1 }, detail))
     : h(Box, { key: 'body', flexDirection: 'column' }, empty, detail))
 
+  const stopAllConfirm = !stopAllPending || stopAllTargets.length === 0 ? null : h(Box, { key: 'stop-all-confirm', flexDirection: 'column' },
+    h(Text, { color: 'warning' }, `停止全部 ${stopAllTargets.length} 个工作中的 Bot：${stopAllTargets.map((bot) => bot.name).join('、')}`),
+    h(Text, { color: 'inactive' }, 'S 确认停止 · Esc 取消'),
+  )
+
   return h(Box, { flexDirection: 'column', width: '100%', paddingX: 1 },
     header,
     body,
     h(Box, { flexGrow: 1 }),
+    stopAllConfirm,
     footer,
   )
 }
