@@ -82,7 +82,7 @@ const screen = (term: any, rows: number) => viewportLines(term, rows).join('\n')
     ['e', MODE_HINTS.edit, 400],
     ['t', MODE_HINTS.groups, 400],
     ['a', MODE_HINTS.approvals, 500],
-    ['y', MODE_HINTS.usage, 900],
+    ['Y', MODE_HINTS.usage, 900],
     ['o', MODE_HINTS.computer, 500],
   ]
   for (const [key, hint, pause] of panels) {

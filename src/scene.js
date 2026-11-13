@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { activityOf, clearFailure, markSeen, subscribe, unreadOf } from './activity.js'
 import { approvalHistory, recordApproval, subscribeApprovalHistory } from './approvalHistory.js'
 import { readCollapsed, writeCollapsed } from './collapse.js'
+import { copyText, plainText } from './clipboard.js'
 import { readCompact, writeCompact } from './layout.js'
 import { watchTeam } from './watch.js'
 
@@ -65,7 +66,7 @@ export const HELP_SECTIONS = [
       ['S', '停止所有工作中的 Bot（先确认）'],
       ['x', '删除（连按两次确认）'],
       ['X', '清除选中 Bot 的失败记录'],
-      ['space / C', '折叠详情 · 切换紧凑/普通布局'],
+      ['space / C / y / Y', '折叠详情 · 切换紧凑 · 复制最近回复 · 查看用量'],
       ['← / →', '折叠 / 展开当前分组'],
       ['PgUp / PgDn', '详情面板翻页（更早 / 更晚）'],
       ['/', '按名称或标签搜索'],
@@ -145,7 +146,7 @@ export const HELP_SECTIONS = [
   {
     title: '用量',
     keys: [
-      ['y', '查看当前 Bot 的 token 用量'],
+      ['Y', '查看当前 Bot 的 token 用量'],
       ['d / w / m', '按一天 / 一周 / 一月汇总'],
       ['r', '刷新统计'],
       ['Esc', '返回名册'],
@@ -450,12 +451,27 @@ function relative(at) {
 function eventText(event) {
   if (event?.type !== 'user/message' && event?.type !== 'assistant/message') return ''
   const message = event.type === 'assistant/message' ? event.data?.message : { content: event.data?.content }
+  if (typeof message?.content === 'string') return message.content.trim()
   const blocks = Array.isArray(message?.content) ? message.content : []
   return blocks
     .filter((block) => block?.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text)
     .join(' ')
     .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Copy needs the text blocks without the display fold's whitespace collapse:
+// code fences and line breaks must survive into the clipboard.
+function eventRawText(event) {
+  if (event?.type !== 'user/message' && event?.type !== 'assistant/message') return ''
+  const message = event.type === 'assistant/message' ? event.data?.message : { content: event.data?.content }
+  if (typeof message?.content === 'string') return message.content.trim()
+  const blocks = Array.isArray(message?.content) ? message.content : []
+  return blocks
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
     .trim()
 }
 
@@ -2747,6 +2763,68 @@ export function TeamScene(props) {
     }
   }
 
+  const latestLiveAssistant = () => {
+    const messages = Array.isArray(current?.live?.messages) ? current.live.messages : []
+    for (let at = messages.length - 1; at >= 0; at -= 1) {
+      if (messages[at]?.role === 'assistant' && typeof messages[at]?.text === 'string' && messages[at].text !== '') {
+        return { text: messages[at].text, at: Number(messages[at]?.at ?? 0) || 0 }
+      }
+    }
+    return undefined
+  }
+
+  const latestStoredAssistant = async () => {
+    try {
+      const controller = pageController()
+      const sessionId = current?.sessionId
+      if (controller === undefined || sessionId === undefined || sessionId === null || String(sessionId) === '') return undefined
+      const result = await controller.page({
+        address: { kind: 'session', sessionId: String(sessionId) },
+        maxMessages: HISTORY_PAGE,
+      })
+      const records = Array.isArray(result?.records) ? result.records : []
+      for (let at = records.length - 1; at >= 0; at -= 1) {
+        const event = records[at]?.event ?? records[at]
+        if (event?.type !== 'assistant/message') continue
+        const text = eventRawText(event)
+        if (text !== '') return { text, at: Number(event?.time ?? event?.at ?? 0) || 0 }
+      }
+    } catch {
+      // The live record is still a usable fallback.
+    }
+    return undefined
+  }
+
+  const copyLatestReply = async () => {
+    if (busy || current === undefined) return
+    setBusy(true)
+    setNotice('')
+    try {
+      const live = latestLiveAssistant()
+      const stored = await latestStoredAssistant()
+      // Prefer the newer record; on a tie the stored copy wins because it keeps
+      // the full text while the live fold truncates to 160 characters.
+      const chosen = live !== undefined && (stored === undefined || live.at > stored.at) ? live : stored
+      let text = plainText(chosen?.text ?? '')
+      if (text === '' && chosen !== stored && stored !== undefined) text = plainText(stored.text)
+      if (text === '' && chosen !== live && live !== undefined) text = plainText(live.text)
+      if (text === '') {
+        setNotice('没有可复制的 assistant 回复。')
+        return
+      }
+      const result = await copyText(text)
+      if (!result.ok) {
+        setNotice('当前终端不支持复制。')
+        return
+      }
+      setNotice(`已复制最近回复（${Array.from(text).length} 字）。`)
+    } catch {
+      setNotice('当前终端不支持复制。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const turnHistory = async (direction) => {
     if (current === undefined || !detailOpen || history.state === 'loading') return
     if (direction > 0) {
@@ -3946,6 +4024,10 @@ export function TeamScene(props) {
       return
     }
     if (input === 'y' && current !== undefined) {
+      void copyLatestReply()
+      return
+    }
+    if (input === 'Y' && current !== undefined) {
       void openUsage()
       return
     }
@@ -4138,7 +4220,7 @@ export function TeamScene(props) {
           )),
       ),
     h(Text, { color: 'inactive' }, 'Enter 进入 · m 发消息 · s 停止'),
-    h(Text, { color: 'inactive' }, 'space 折叠 · PgUp/PgDn 历史'),
+    h(Text, { color: 'inactive' }, 'y 复制最近回复 · Y 用量 · space 折叠 · PgUp/PgDn 历史'),
   )
   const detailLine = current === undefined ? null : h(Box, { key: 'detail', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: detailStatus.color }, truncate([
@@ -5008,7 +5090,7 @@ export function TeamScene(props) {
         : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
       h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · ←/→ 分组 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
-      h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 用量 · o 电脑 · I 体检${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
+      h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 复制 · Y 用量 · o 电脑 · I 体检${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
     : h(Box, { key: 'footer', flexDirection: 'column', marginTop: 1 },

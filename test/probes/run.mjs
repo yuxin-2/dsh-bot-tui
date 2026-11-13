@@ -68,6 +68,7 @@ const sources = [
   'src/activity.js',
   'src/collapse.js',
   'src/layout.js',
+  'src/clipboard.js',
   'src/watch.js',
   'test/probes/run.mjs',
 ]

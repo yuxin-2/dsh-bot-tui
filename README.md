@@ -137,12 +137,13 @@ h        approval history (in the a panel)
 p        approve pending MCPs       v      mount/unmount capabilities (space multi-select)
 u        release this terminal's claim
 space    collapse/expand details
+y        copy latest reply
 C        toggle compact/normal layout
 ←/→      collapse/expand the selected group
 PgUp/PgDn  detail history (older/newer)
 I        health check (read-only)
 ?        help overlay
-y        token usage for this Bot   o      Computer panel
+Y        token usage for this Bot   o      Computer panel
 q/Esc  back to the chat
 ```
 
@@ -158,7 +159,7 @@ lists per-site grants (`n` adds one, `x` revokes the selected one). `t` lists
 group chats: create one from a Bot checklist, open it, rename it, change members,
 admin, reply mode, permission, folder, section, notice, memory, or schedules, and
 delete it. `a`
-answers DS Bot's pending approvals (`Enter` allow, `x` reject). `y` sums the
+answers DS Bot's pending approvals (`Enter` allow, `x` reject). `Y` sums the
 usage ledger by Bot and draws a daily trend (one row per day, block characters,
 width following the terminal); `d`/`w`/`m` narrow it to a day, a week or a month.
 The header shows the total and the daily average; long Bot names truncate in the

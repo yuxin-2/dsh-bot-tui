@@ -78,7 +78,7 @@ const screen = (term: any, rows: number) => viewportLines(term, rows).join('\n')
   rows = [row(dayKey(0), 0, 1000, 200, 3)]
   available = true
   const { term, stdin, app } = await mount()
-  stdin.write('y'); await wait(500)
+  stdin.write('Y'); await wait(500)
   stdin.write('d'); await wait(500)
   const view = await screen(term, 30)
   expect('single day shows a one-day trend', view.includes('近 1 天'), view.slice(0, 1200))
@@ -92,7 +92,7 @@ const screen = (term: any, rows: number) => viewportLines(term, rows).join('\n')
 {
   rows = [row(dayKey(0), 0, 1000, 200, 3), row(dayKey(-2), 1, 500, 100, 2)]
   const { term, stdin, app } = await mount()
-  stdin.write('y'); await wait(500)
+  stdin.write('Y'); await wait(500)
   const view = await screen(term, 30)
   expect('week trend covers seven days', view.includes('近 7 天'), view.slice(0, 1400))
   expect('a missing day keeps its zero row', view.includes(`${dayKey(-1).slice(5)}`) && /(^|\n).*?\b0\b/.test(view), view.slice(0, 1600))
@@ -107,7 +107,7 @@ const screen = (term: any, rows: number) => viewportLines(term, rows).join('\n')
   rows = []
   available = true
   const { term, stdin, app } = await mount()
-  stdin.write('y'); await wait(500)
+  stdin.write('Y'); await wait(500)
   const view = await screen(term, 30)
   expect('an empty ledger is explicit', view.includes('还没有记录'), view.slice(0, 800))
   expect('an empty ledger has no trend chart', !view.includes('按天趋势'), view.slice(0, 800))
@@ -119,7 +119,7 @@ const screen = (term: any, rows: number) => viewportLines(term, rows).join('\n')
   rows = [row(dayKey(0), 0, 1000, 200, 3), row(dayKey(-2), 1, 500, 100, 2)]
   available = true
   const { term, stdin, app } = await mount(30, 30)
-  stdin.write('y'); await wait(500)
+  stdin.write('Y'); await wait(500)
   const view = await screen(term, 30)
   const runs = view.match(/[▁▂▃▄▅▆▇█]+/g) ?? []
   const longest = runs.reduce((max, run) => Math.max(max, run.length), 0)
