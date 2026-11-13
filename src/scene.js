@@ -18,6 +18,7 @@ import { approvalHistory, recordApproval, subscribeApprovalHistory } from './app
 import { readCollapsed, writeCollapsed } from './collapse.js'
 import { copyText, plainText } from './clipboard.js'
 import { readCompact, writeCompact } from './layout.js'
+import { checkPreflight, readDsBotVersion, DS_BOT_COMPAT_RANGE, DS_BOT_PACKAGE, dsBotCompat } from './preflight.js'
 import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
@@ -225,6 +226,15 @@ let runtime = () => undefined
 
 export function bindRuntime(get) {
   runtime = get
+}
+
+// The host services are checked at startup too. The scene is only reachable
+// through tuiScenes, but binding them here keeps the check honest when a host
+// composes a partial surface.
+let host = () => undefined
+
+export function bindHost(get) {
+  host = get
 }
 
 function dshHome() {
@@ -542,6 +552,14 @@ export function TeamScene(props) {
   const { columns, rows } = useTerminalSize()
 
   const [team, setTeam] = React.useState(readTeam)
+  const preflight = React.useMemo(() => checkPreflight({
+    runtime: runtime(),
+    services: host(),
+    team,
+    dsBotVersion: readDsBotVersion(),
+  }), [team])
+  const runtimeReady = preflight.every((issue) => issue.key !== 'runtime')
+  const canWrite = runtimeReady && (team.error === '' || team.error.includes('不存在'))
   const [selectedId, setSelectedId] = React.useState(undefined)
   const [collapsed, setCollapsed] = React.useState(readCollapsed)
   const [collapseReturn, setCollapseReturn] = React.useState({})
@@ -3953,10 +3971,18 @@ export function TeamScene(props) {
       return
     }
     if (input === 'n') {
+      if (!canWrite) {
+        setNotice('创建团队不可用：先修复顶部提示。')
+        return
+      }
       void createChief()
       return
     }
     if (input === 'm' && current !== undefined) {
+      if (!runtimeReady) {
+        setNotice('发消息不可用：DS Bot 运行时未就绪。')
+        return
+      }
       setMode('message')
       setDraft('')
       setPendingDelete(undefined)
@@ -3987,6 +4013,10 @@ export function TeamScene(props) {
       return
     }
     if (input === 'c') {
+      if (!canWrite) {
+        setNotice('新建 Bot 不可用：先修复顶部提示。')
+        return
+      }
       setMode('create')
       setDraft('')
       setPendingDelete(undefined)
@@ -4098,8 +4128,19 @@ export function TeamScene(props) {
     team.foreign === undefined
       ? null
       : h(Text, { color: 'warning' }, `⚠ 另一个 DS Bot 持有团队锁（pid ${team.foreign.pid}），本终端只读。`),
-    team.error === '' ? null : h(Text, { color: 'error' }, team.error),
   )
+
+  const preflightBanner = preflight.length === 0
+    ? null
+    : h(Box, { key: 'preflight', flexDirection: 'column' },
+      ...preflight.map((issue) => h(Box, { key: `preflight-${issue.key}`, flexDirection: 'column' },
+        h(Box, { flexDirection: 'row' },
+          h(Text, { color: issue.tone === 'error' ? 'error' : 'warning' }, `${issue.tone === 'error' ? '✗' : '!'} `),
+          h(Text, { color: issue.tone === 'error' ? 'error' : 'warning' }, truncate(issue.message, Math.max(8, columns - 4))),
+        ),
+        issue.detail === undefined ? null : h(Text, { color: 'subtle' }, truncate(`原因 ${issue.detail}`, Math.max(8, columns - 6))),
+      )),
+    )
 
   const rowsView = []
   const showRole = columns >= 56
@@ -4540,6 +4581,8 @@ export function TeamScene(props) {
     const foreignSessions = foreignOwners.reduce((total, owner) => total + owner.sessionIds.length, 0)
     const tui = readTuiVersion()
     const compat = tui === null ? undefined : tuiCompat(tui.version)
+    const dsBot = readDsBotVersion()
+    const dsBotOk = dsBot === null ? undefined : dsBotCompat(dsBot.version)
     const items = []
 
     if (rt === undefined) {
@@ -4627,6 +4670,22 @@ export function TeamScene(props) {
           : compat === false
             ? '插件针对 0.19.x 验证；升级 dsh-TUI 前先检查场景与通道接缝。'
             : '版本无法判断；按 README 的兼容范围核对。',
+      })
+    }
+
+    if (dsBot === null) {
+      items.push({
+        key: 'dsbot-version', label: 'DS Bot 版本', icon: '?', tone: 'unknown',
+        value: `不确定（未找到 ${DS_BOT_PACKAGE} package.json）· 兼容范围 ${DS_BOT_COMPAT_RANGE}`,
+        advice: '确认 ds-bot 已安装在 dsh 的 profile 中；主界面不会因版本信息缺失而拦截。',
+      })
+    } else {
+      items.push({
+        key: 'dsbot-version', label: 'DS Bot 版本', icon: dsBotOk === true ? '✓' : '!', tone: dsBotOk === true ? 'ok' : 'warn',
+        value: `${dsBot.version} · 兼容范围 ${DS_BOT_COMPAT_RANGE}`,
+        advice: dsBotOk === true
+          ? '无需操作。'
+          : `插件针对 ${DS_BOT_COMPAT_RANGE} 验证；按 README 安装匹配版本。`,
       })
     }
 
@@ -5089,7 +5148,7 @@ export function TeamScene(props) {
         ? h(Text, { color: 'warning' }, 'S 确认停止 · Esc 取消')
         : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
-      h(Text, { color: 'subtle' }, `c 新建 · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · ←/→ 分组 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
+      h(Text, { color: canWrite ? 'subtle' : 'error' }, `c 新建${canWrite ? '' : '（不可用）'} · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · ←/→ 分组 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
       h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 复制 · Y 用量 · o 电脑 · I 体检${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
@@ -5101,7 +5160,9 @@ export function TeamScene(props) {
     )
 
   const empty = total === 0
-    ? h(Text, { color: 'subtle' }, '还没有团队 · 按 n 创建第一位 Main Bot（Chief）')
+    ? h(Text, { color: canWrite ? 'subtle' : 'warning' }, canWrite
+      ? '还没有团队 · 按 n 创建第一位 Main Bot（Chief）'
+      : '还没有团队 · 创建不可用（先修复顶部提示）')
     : displayItems.length === 0
     ? h(Text, { color: 'subtle' }, `没有匹配「${search}」的 Bot · Esc 清除`)
     : h(Box, { flexDirection: 'column' }, rowsView)
@@ -5119,6 +5180,7 @@ export function TeamScene(props) {
 
   return h(Box, { flexDirection: 'column', width: '100%', paddingX: 1 },
     header,
+    preflightBanner,
     body,
     h(Box, { flexGrow: 1 }),
     stopAllConfirm,

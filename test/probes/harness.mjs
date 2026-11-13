@@ -41,7 +41,7 @@ export const { render, ThemeProvider } = ui
 export const { viewportLines } = await import(pathToFileURL(join(dshTuiRoot, 'scripts/lib/term-test.mjs')).href)
 
 const scene = await import(pathToFileURL(join(repoRoot, 'src/scene.js')).href)
-export const { TeamScene, bindRuntime } = scene
+export const { TeamScene, bindRuntime, bindHost } = scene
 const activity = await import(pathToFileURL(join(repoRoot, 'src/activity.js')).href)
 export const { observe, install, activityOf } = activity
 

@@ -11,7 +11,7 @@
 // roster plus a few fleet actions (message, create, stop, delete), so no
 // transcript is duplicated and no second agent is created.
 import { install as installActivity } from './activity.js'
-import { TeamScene, bindRuntime } from './scene.js'
+import { TeamScene, bindRuntime, bindHost } from './scene.js'
 
 export const name = 'dsh-bot-tui'
 
@@ -26,6 +26,7 @@ export function apply(ctx) {
   // `false` is falsy but not undefined, and every "runtime not ready" check
   // would miss it and then call a method on `false`.
   bindRuntime(() => ctx.get('dsBot') ?? undefined)
+  bindHost(() => ({ commands: ctx.commands, tuiScenes: ctx.tuiScenes }))
   installActivity(ctx)
 
   const disposeScene = ctx.tuiScenes.register({

@@ -69,6 +69,7 @@ const sources = [
   'src/collapse.js',
   'src/layout.js',
   'src/clipboard.js',
+  'src/preflight.js',
   'src/watch.js',
   'test/probes/run.mjs',
 ]
