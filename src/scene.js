@@ -71,7 +71,7 @@ export const HELP_SECTIONS = [
       ['a', '回答待审批的请求'],
       ['a → h', '查看本终端已决审批'],
       ['p', '批准待授权的 MCP 能力'],
-      ['v', '挂载 / 卸载当前 Bot 的能力'],
+      ['v', '挂载 / 卸载当前 Bot 的能力（空格多选）'],
       ['u', '释放本终端对该会话的占用'],
       ['n', '空团队时创建 Chief'],
       ['r', '重读 state.json'],
@@ -194,7 +194,7 @@ export const MODE_HINTS = {
   usage: 'd 一天 · w 一周 · m 一月 · r 刷新 · Esc 返回',
   health: '只读采集 · Esc 返回',
   approve: '↑↓ 选择 · Enter 批准 · Esc 返回',
-  capabilities: '↑↓ 选择 · Enter 挂载/卸载 · Esc 返回',
+  capabilities: '↑↓ 选择 · 空格 多选 · Enter 批量挂载/卸载 · Esc 返回',
   approvals: '↑↓ 选择 · Enter 允许 · x 拒绝 · h 历史 · Esc 返回',
 }
 
@@ -535,6 +535,7 @@ export function TeamScene(props) {
   const [pendingDeleteAt, setPendingDeleteAt] = React.useState(0)
   const [approveIndex, setApproveIndex] = React.useState(0)
   const [capIndex, setCapIndex] = React.useState(0)
+  const [capSelected, setCapSelected] = React.useState([])
   const [editIndex, setEditIndex] = React.useState(0)
   const [fieldKey, setFieldKey] = React.useState(undefined)
   const [fieldTarget, setFieldTarget] = React.useState('bot')
@@ -1006,8 +1007,20 @@ export function TeamScene(props) {
     }
   }
 
-  const toggleCapability = async (item) => {
-    if (busy || current === undefined || item === undefined) return
+  const capTargetFor = (items, at) => {
+    const selected = items.filter((item) => capSelected.includes(item.name))
+    if (selected.length === 0) return undefined
+    const attached = selected.filter((item) => item.attached === true).length
+    if (attached === selected.length) return false
+    if (attached === 0) return true
+    // A mixed selection has no single obvious target: follow the highlighted
+    // item, so Enter still does one thing and the already-correct items are
+    // reported as skipped.
+    return items[at]?.attached === true ? false : true
+  }
+
+  const batchCapabilities = async (items, target) => {
+    if (busy || current === undefined || items.length === 0) return
     const rt = runtime()
     if (!rt) {
       setNotice('DS Bot 运行时还没就绪')
@@ -1015,17 +1028,28 @@ export function TeamScene(props) {
     }
     setBusy(true)
     setNotice('')
+    let done = 0
+    const failed = []
+    const skipped = []
     try {
       await ensureWritable(rt)
-      await rt.capabilityEndpoint('bot-capability', {
-        botId: current.id,
-        name: item.name,
-        attached: !item.attached,
-      })
-      if (!item.attached) {
-        // Reconcile the agents this process already has. Resolving the Bot's
-        // session instead would mount its MCP servers even when no chat is
-        // open; the next real turn mounts them anyway.
+      for (const item of items) {
+        if (item.attached === target) {
+          skipped.push(item.name)
+          continue
+        }
+        try {
+          await rt.capabilityEndpoint('bot-capability', {
+            botId: current.id,
+            name: item.name,
+            attached: target,
+          })
+          done += 1
+        } catch (error) {
+          failed.push(`${item.name}：${error?.message ?? error}`)
+        }
+      }
+      if (done > 0 && target === true) {
         try {
           if (typeof rt.scheduleCapabilitiesReconcile === 'function') {
             await rt.scheduleCapabilitiesReconcile()
@@ -1037,7 +1061,14 @@ export function TeamScene(props) {
         }
       }
       setTeam(readTeam())
-      setNotice(`${item.name} ${item.attached ? '已卸载' : '已挂载'}。`)
+      const skippedText = skipped.length === 0
+        ? ''
+        : `，跳过 ${skipped.length}（已是${target ? '挂载' : '未挂载'}状态）`
+      const failedText = failed.length === 0
+        ? ''
+        : `，失败 ${failed.length}（${failed.join('；')}）`
+      setNotice(`${target ? '批量挂载' : '批量卸载'}完成：成功 ${done}${failedText}${skippedText}。`)
+      setCapSelected([])
     } catch (error) {
       setNotice(`操作失败：${error?.message ?? error}`)
     } finally {
@@ -2785,6 +2816,7 @@ export function TeamScene(props) {
       const items = capabilityList()
       if (key.escape) {
         setMode('list')
+        setCapSelected([])
         setNotice('')
         return
       }
@@ -2796,11 +2828,38 @@ export function TeamScene(props) {
         setCapIndex((at) => Math.min(Math.max(0, items.length - 1), at + 1))
         return
       }
-      if (key.return && !busy && items.length > 0) {
-        // The list can shrink under us (another host unapproves), so never index
-        // past the end: toggle the item the highlight is actually on.
+      if (input === ' ') {
+        if (items.length === 0) return
         const at = Math.min(capIndex, items.length - 1)
-        void toggleCapability(items[at])
+        const name = items[at].name
+        setCapSelected((names) => names.includes(name)
+          ? names.filter((picked) => picked !== name)
+          : [...names, name])
+        return
+      }
+      if (key.return && !busy) {
+        if (items.length === 0) {
+          setNotice('没有可挂载的能力。')
+          return
+        }
+        if (capSelected.length === 0) {
+          setNotice('没有选中能力：空格选中后再按 Enter。')
+          return
+        }
+        const at = Math.min(capIndex, items.length - 1)
+        const selected = items.filter((item) => capSelected.includes(item.name))
+        if (selected.length === 0) {
+          setNotice('没有选中能力：空格选中后再按 Enter。')
+          setCapSelected([])
+          return
+        }
+        const target = capTargetFor(items, at)
+        if (selected.every((item) => item.attached === target)) {
+          setNotice(`选中的 ${selected.length} 个能力已经是${target ? '挂载' : '未挂载'}状态，无需操作。`)
+          setCapSelected([])
+          return
+        }
+        void batchCapabilities(selected, target)
       }
       return
     }
@@ -3825,6 +3884,7 @@ export function TeamScene(props) {
         return
       }
       setCapIndex(0)
+      setCapSelected([])
       setMode('capabilities')
       setPendingDelete(undefined)
       setNotice('')
@@ -4082,15 +4142,28 @@ export function TeamScene(props) {
 
   const capabilityItems = capabilityList()
   const capAt = Math.min(capIndex, Math.max(0, capabilityItems.length - 1))
+  const capSelectedItems = capabilityItems.filter((item) => capSelected.includes(item.name))
+  const capSelectedAttached = capSelectedItems.filter((item) => item.attached === true).length
+  const capBatchTarget = capTargetFor(capabilityItems, capAt)
+  const capStatus = capSelectedItems.length === 0
+    ? '未选'
+    : capSelectedAttached === capSelectedItems.length
+      ? '全部已挂载'
+      : capSelectedAttached === 0
+        ? '全部未挂载'
+        : `混合（按光标项：${capBatchTarget === false ? '批量卸载' : '批量挂载'}）`
   const capView = mode !== 'capabilities' ? null : h(Box, { key: 'capabilities', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: 'accent' }, `${current?.name ?? '?'} 的能力`),
+    h(Text, { color: capSelectedItems.length === 0 ? 'subtle' : 'accent' }, `已选 ${capSelectedItems.length} 个 · ${capStatus}`),
+    h(Text, { color: 'inactive' }, '空格选择 · Enter 批量挂载/卸载 · Esc 返回'),
     ...(capabilityItems.length === 0
       ? [h(Text, { color: 'subtle' }, '没有可挂载的能力；stdio MCP 先按 p 批准。')]
       : capabilityItems.map((item, at) => h(Box, { key: item.name, flexDirection: 'row' },
         h(Text, { color: at === capAt ? 'accent' : 'subtle' }, at === capAt ? ' ❯ ' : '   '),
+        h(Text, { color: capSelected.includes(item.name) ? 'accent' : 'subtle' }, capSelected.includes(item.name) ? '[x] ' : '[ ] '),
         h(Text, { bold: at === capAt, color: at === capAt ? 'accent' : 'text' }, pad(item.name, 16)),
         h(Text, { color: item.attached ? 'success' : 'subtle' }, item.attached ? ' 已挂载' : ' 未挂载'),
-        h(Text, { color: 'subtle' }, ` ${truncate(item.description ?? '', Math.max(8, columns - 35))}`),
+        h(Text, { color: 'subtle' }, ` ${truncate(item.description ?? '', Math.max(8, columns - 41))}`),
       ))),
   )
 

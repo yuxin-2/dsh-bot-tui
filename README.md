@@ -134,7 +134,7 @@ n        create Chief (empty team)  r      re-read state.json
 /        search name or label       t      group chats
 e        edit this Bot's settings   a      answer pending approvals
 h        approval history (in the a panel)
-p        approve pending MCPs       v      mount/unmount capabilities
+p        approve pending MCPs       v      mount/unmount capabilities (space multi-select)
 u        release this terminal's claim
 space    collapse/expand details
 ←/→      collapse/expand the selected group
@@ -164,6 +164,10 @@ The header shows the total and the daily average; long Bot names truncate in the
 rows and stay complete in the detail line. `o` opens
 the Computer panel: the global switch, provider retry, each Bot's level, and the
 app grants that can be revoked.
+
+`v` opens the selected Bot's capability list: `space` toggles multiple rows,
+`Enter` mounts or unmounts all selected items one by one, and the result line
+counts successes, failures with reasons, and items already in the target state.
 
 The memory panel (`e` → Memory) is a two-way editor: `a` asks the keeper Bot to
 add, edit or remove entries in plain language, `Enter` edits the selected entry
