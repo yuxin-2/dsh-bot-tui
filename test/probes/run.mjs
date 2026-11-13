@@ -70,6 +70,7 @@ const sources = [
   'src/layout.js',
   'src/clipboard.js',
   'src/preflight.js',
+  'src/questions.js',
   'src/watch.js',
   'test/probes/run.mjs',
 ]

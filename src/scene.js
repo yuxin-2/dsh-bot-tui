@@ -19,6 +19,7 @@ import { readCollapsed, writeCollapsed } from './collapse.js'
 import { copyText, plainText } from './clipboard.js'
 import { readCompact, writeCompact } from './layout.js'
 import { checkPreflight, readDsBotVersion, DS_BOT_COMPAT_RANGE, DS_BOT_PACKAGE, dsBotCompat } from './preflight.js'
+import { answerFor, questionsForBots, readQuestions } from './questions.js'
 import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
@@ -71,8 +72,8 @@ export const HELP_SECTIONS = [
       ['← / →', '折叠 / 展开当前分组'],
       ['PgUp / PgDn', '详情面板翻页（更早 / 更晚）'],
       ['/', '按名称或标签搜索'],
-      ['a', '回答待审批的请求'],
-      ['a → h', '查看本终端已决审批'],
+      ['a', '回答待审批的请求（h 查看已决历史）'],
+      ['Q', '回答待答问题（ask_user 卡片）'],
       ['p', '批准待授权的 MCP 能力'],
       ['v', '挂载 / 卸载当前 Bot 的能力（空格多选）'],
       ['u', '释放本终端对该会话的占用'],
@@ -153,6 +154,19 @@ export const HELP_SECTIONS = [
       ['Esc', '返回名册'],
     ],
   },
+  {
+    title: '提问',
+    keys: [
+      ['Q', '打开待答问题（ask_user 卡片）'],
+      ['↑/↓ 或 1–6', '选择选项（多选则切换）'],
+      ['空格', '选中 / 取消选中'],
+      ['Enter', '发送回答'],
+      ['c', '自定义回答（卡片允许时）'],
+      ['n / p', '切换下一个 / 上一个问题'],
+      ['x', '关闭卡片（不回答）'],
+      ['Esc', '返回名册'],
+    ],
+  },
 ]
 
 const HELP_ENTRIES = HELP_SECTIONS.flatMap((section) => [
@@ -199,6 +213,8 @@ export const MODE_HINTS = {
   approve: '↑↓ 选择 · Enter 批准 · Esc 返回',
   capabilities: '↑↓ 选择 · 空格 多选 · Enter 批量挂载/卸载 · Esc 返回',
   approvals: '↑↓ 选择 · Enter 允许 · x 拒绝 · h 历史 · Esc 返回',
+  questions: '↑↓ 选项 · 空格/1–6 选择 · Enter 发送 · c 自定义 · n/p 切换 · x 关闭 · Esc 返回',
+  'question-custom': 'Enter 发送 · Esc 返回',
 }
 
 // Two modes carry state-dependent hints; everything else is a static line.
@@ -246,7 +262,7 @@ export function readTeam() {
   const home = join(dshHome(), 'bot')
   const statePath = join(home, 'state.json')
   const lockPath = join(home, 'state.lock')
-  const team = { bots: [], rooms: [], sections: [], pending: [], revision: undefined, mainId: undefined, error: '', foreign: undefined }
+  const team = { bots: [], rooms: [], sections: [], pending: [], questions: [], revision: undefined, mainId: undefined, error: '', foreign: undefined }
 
   try {
     const state = JSON.parse(readFileSync(statePath, 'utf8'))
@@ -317,6 +333,10 @@ export function readTeam() {
     team.pending = Object.values(state.capabilities?.items ?? {})
       .filter((item) => item?.kind === 'mcp' && item.transport === 'stdio' && item.approved !== true)
       .map((item) => ({ name: item.name, description: item.description ?? '', createdBy: item.createdBy ?? '' }))
+    // ask_user cards: the browser is the only renderer DS Bot ships, so the
+    // roster carries them instead of letting the Bot look idle with a question
+    // nobody can see (src/questions.js).
+    team.questions = readQuestions(state)
   } catch (error) {
     team.error = error?.code === 'ENOENT'
       ? `还没有团队：${statePath} 不存在。按 n 创建第一位 Main Bot。`
@@ -573,6 +593,9 @@ export function TeamScene(props) {
   const [approveIndex, setApproveIndex] = React.useState(0)
   const [capIndex, setCapIndex] = React.useState(0)
   const [capSelected, setCapSelected] = React.useState([])
+  const [questionIndex, setQuestionIndex] = React.useState(0)
+  const [questionOptionIndex, setQuestionOptionIndex] = React.useState(0)
+  const [questionSelected, setQuestionSelected] = React.useState([])
   const [editIndex, setEditIndex] = React.useState(0)
   const [fieldKey, setFieldKey] = React.useState(undefined)
   const [fieldTarget, setFieldTarget] = React.useState('bot')
@@ -681,11 +704,16 @@ export function TeamScene(props) {
   }, [])
 
   const sectionOrder = new Map(team.sections.map((section, at) => [section.id, at]))
+  // A question card belongs to the Session that asked it. A rotated Bot asks
+  // under its current part, but an older card still names an earlier segment,
+  // so matching walks both (src/questions.js explains the shape).
+  const { byBot: questionByBot, orphans: orphanQuestions } = questionsForBots(team.bots, team.questions)
   const teamBots = team.bots
     .map((bot) => ({
       ...bot,
       live: activityOf(bot.sessionId),
       unread: unreadOf(bot.sessionId),
+      question: questionByBot.get(bot.id),
     }))
     .sort((a, b) => {
       // Sidebar sections first, in the order DS Bot keeps them; ungrouped last.
@@ -695,9 +723,16 @@ export function TeamScene(props) {
       if (aGrouped === 0 && a.sectionId !== b.sectionId) {
         return (sectionOrder.get(a.sectionId) ?? 0) - (sectionOrder.get(b.sectionId) ?? 0)
       }
-      const rank = (bot) => (bot.main ? 0 : bot.live?.status === 'needs-input' ? 1 : bot.live?.status === 'working' ? 2 : bot.unread > 0 ? 3 : 4)
+      const rank = (bot) => (bot.main ? 0 : bot.question !== undefined || bot.live?.status === 'needs-input' ? 1 : bot.live?.status === 'working' ? 2 : bot.unread > 0 ? 3 : 4)
       return rank(a) - rank(b) || a.name.localeCompare(b.name)
     })
+  // The Q panel lists every open card, including one whose Bot row is gone (a
+  // deleted Bot or a rotated part): it still needs a way to be closed.
+  const openQuestions = teamBots
+    .filter((bot) => bot.question !== undefined)
+    .map((bot) => ({ bot, card: bot.question, sessionId: bot.question.sessionId }))
+  for (const card of orphanQuestions) openQuestions.push({ bot: undefined, card, sessionId: card.sessionId })
+  openQuestions.sort((a, b) => a.card.askedAt - b.card.askedAt || a.sessionId.localeCompare(b.sessionId))
   const needle = search.trim().toLowerCase()
   const searching = needle !== ''
   const matches = searching
@@ -750,6 +785,7 @@ export function TeamScene(props) {
   const working = teamBots.filter((bot) => bot.live?.status === 'working').length
   const stopAllTargets = teamBots.filter((bot) => bot.live?.status === 'working')
   const waiting = teamBots.filter((bot) => bot.live?.status === 'needs-input').length
+  const questionTotal = openQuestions.length
   const unread = teamBots.reduce((total, bot) => total + bot.unread, 0)
   // Focus is a row key: either a Bot id or `section:<id>`. Headers are focusable
   // so a collapsed group can be opened again without a member to stand on.
@@ -787,8 +823,14 @@ export function TeamScene(props) {
   // show (the terminal's own Bot, or one held by another window) is not a jump
   // target either.
   const showsUnread = (bot) => bot.unread > 0 && here?.id !== bot.id && foreignOf(bot) === undefined
-  const needsInputCount = bots.filter((bot) => bot.live?.status === 'needs-input').length
+  const approvalWaiting = bots.filter((bot) => bot.live?.status === 'needs-input').length
+  const questionWaiting = bots.filter((bot) => bot.question !== undefined).length
   const unreadCount = bots.filter(showsUnread).length
+  const attention = [
+    questionWaiting > 0 ? `${questionWaiting} 个待答问题` : '',
+    approvalWaiting > 0 ? `${approvalWaiting} 个待回答` : '',
+    unreadCount > 0 ? `${unreadCount} 个新回复` : '',
+  ].filter((part) => part !== '').join(' / ')
   const listHeight = Math.max(1, Math.min(displayItems.length, rows - 11))
   const offset = Math.max(0, Math.min(focusAt - listHeight + 1, displayItems.length - listHeight))
   const helpHeight = Math.max(1, rows - 6)
@@ -2159,6 +2201,119 @@ export function TeamScene(props) {
     }
   }
 
+  // ── ask_user cards ──────────────────────────────────────────────────────
+  const openQuestionsPanel = () => {
+    if (openQuestions.length === 0) {
+      setNotice('没有待答问题。')
+      return
+    }
+    setQuestionIndex(0)
+    setQuestionOptionIndex(0)
+    setQuestionSelected([])
+    setMode('questions')
+    setNotice('')
+  }
+
+  const switchQuestion = (delta) => {
+    if (openQuestions.length === 0) return
+    const at = Math.min(Math.max(0, questionIndex + delta), openQuestions.length - 1)
+    if (at === questionIndex) return
+    setQuestionIndex(at)
+    setQuestionOptionIndex(0)
+    setQuestionSelected([])
+    setNotice('')
+  }
+
+  // The card's answer ends up as the user's next message, so the Bot resumes
+  // from it like any other turn (DS Bot's answer-question does the queueing).
+  const sendQuestionAnswer = async (entry, selected, custom = '') => {
+    if (entry === undefined) return
+    const rt = runtime()
+    if (rt === undefined) {
+      setNotice('回答不可用：DS Bot 运行时未就绪。')
+      return
+    }
+    if (typeof rt.answerQuestion !== 'function') {
+      setNotice('当前后端不支持回答提问卡片。')
+      return
+    }
+    const answer = answerFor(entry.card, selected, custom)
+    if (answer === undefined) {
+      setNotice(entry.card.allowCustom ? '先选一个选项，或按 c 自己写。' : '先用空格选一个选项。')
+      return
+    }
+    setBusy(true)
+    try {
+      await rt.answerQuestion(entry.sessionId, entry.card.id, answer)
+      const next = readTeam()
+      setTeam(next)
+      setQuestionSelected([])
+      setQuestionOptionIndex(0)
+      setFieldDraft('')
+      const name = entry.bot?.name ?? '该会话'
+      if ((next.questions ?? []).length === 0) {
+        setMode('list')
+        setNotice(`已回复 ${name}。`)
+      } else {
+        setMode('questions')
+        setQuestionIndex((at) => Math.min(at, next.questions.length - 1))
+        setNotice(`已回复 ${name}。`)
+      }
+    } catch (error) {
+      setNotice(`回答失败：${error?.message ?? error}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Closing is not answering: DS Bot keeps the card in the transcript as
+  // dismissed. The host op has no direct rt helper, so use the same primitives
+  // it does (load, closeCard, delete, save) and refuse when they are absent.
+  const dismissQuestion = async (entry) => {
+    if (entry === undefined) return
+    const rt = runtime()
+    if (rt === undefined || typeof rt.closeCard !== 'function' || typeof rt.save !== 'function' || typeof rt.load !== 'function') {
+      setNotice('当前后端不支持关闭提问卡片。')
+      return
+    }
+    setBusy(true)
+    try {
+      await rt.load()
+      const cards = rt.state?.questions
+      if (cards === null || typeof cards !== 'object') {
+        setNotice('当前后端没有暴露提问卡片状态。')
+        return
+      }
+      const card = rt.own?.(cards, entry.sessionId) ?? cards[entry.sessionId]
+      if (card === undefined) {
+        const next = readTeam()
+        setTeam(next)
+        if ((next.questions ?? []).length === 0) setMode('list')
+        setNotice('这张提问卡片已经关闭。')
+        return
+      }
+      if (card.id !== entry.card.id) {
+        setTeam(readTeam())
+        setNotice('提问内容已经变化，请重新打开面板。')
+        return
+      }
+      rt.closeCard(entry.sessionId, card, 'dismissed')
+      delete cards[entry.sessionId]
+      await rt.save()
+      const next = readTeam()
+      setTeam(next)
+      setQuestionSelected([])
+      setQuestionOptionIndex(0)
+      if ((next.questions ?? []).length === 0) setMode('list')
+      else setQuestionIndex((at) => Math.min(at, next.questions.length - 1))
+      setNotice('已关闭提问卡片（未回答）。')
+    } catch (error) {
+      setNotice(`关闭失败：${error?.message ?? error}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const localZone = () => {
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
@@ -2611,7 +2766,9 @@ export function TeamScene(props) {
   const jumpTo = (kind) => {
     const targets = []
     bots.forEach((bot, at) => {
-      const hit = kind === 'needs-input' ? bot.live?.status === 'needs-input' : showsUnread(bot)
+      const hit = kind === 'needs-input'
+        ? bot.question !== undefined || bot.live?.status === 'needs-input'
+        : showsUnread(bot)
       if (hit) targets.push(at)
     })
     if (targets.length === 0) {
@@ -3407,6 +3564,93 @@ export function TeamScene(props) {
       }
       return
     }
+    if (mode === 'questions') {
+      if (key.escape || input === 'q') {
+        setMode('list')
+        setQuestionSelected([])
+        setNotice('')
+        return
+      }
+      const at = Math.min(questionIndex, Math.max(0, openQuestions.length - 1))
+      const entry = openQuestions[at]
+      if (entry === undefined) {
+        setMode('list')
+        return
+      }
+      const card = entry.card
+      const options = card.options
+      if (input === 'n' || input === ']') {
+        switchQuestion(1)
+        return
+      }
+      if (input === 'p' || input === '[') {
+        switchQuestion(-1)
+        return
+      }
+      if (input === 'c' && card.allowCustom && !busy) {
+        setFieldDraft('')
+        setMode('question-custom')
+        setNotice('')
+        return
+      }
+      if (input === 'x' && !busy) {
+        void dismissQuestion(entry)
+        return
+      }
+      if (key.upArrow || input === 'k') {
+        setQuestionOptionIndex((index) => Math.max(0, index - 1))
+        return
+      }
+      if (key.downArrow || input === 'j') {
+        setQuestionOptionIndex((index) => Math.min(Math.max(0, options.length - 1), index + 1))
+        return
+      }
+      if (input === ' ') {
+        const option = options[Math.min(questionOptionIndex, options.length - 1)]
+        if (option === undefined) return
+        setQuestionSelected((labels) => card.multiSelect
+          ? labels.includes(option.label) ? labels.filter((label) => label !== option.label) : [...labels, option.label]
+          : [option.label])
+        return
+      }
+      if (/^[1-6]$/.test(input)) {
+        const option = options[Number(input) - 1]
+        if (option === undefined) return
+        setQuestionOptionIndex(Number(input) - 1)
+        setQuestionSelected((labels) => card.multiSelect
+          ? labels.includes(option.label) ? labels.filter((label) => label !== option.label) : [...labels, option.label]
+          : [option.label])
+        return
+      }
+      if (key.return && !busy) {
+        const fallback = card.multiSelect
+          ? []
+          : [options[Math.min(questionOptionIndex, options.length - 1)]?.label].filter((label) => label !== undefined)
+        void sendQuestionAnswer(entry, questionSelected.length > 0 ? questionSelected : fallback)
+      }
+      return
+    }
+    if (mode === 'question-custom') {
+      if (key.escape) {
+        setMode('questions')
+        setNotice('')
+        return
+      }
+      if (key.return && !busy) {
+        const at = Math.min(questionIndex, Math.max(0, openQuestions.length - 1))
+        void sendQuestionAnswer(openQuestions[at], questionSelected, fieldDraft)
+        return
+      }
+      if (key.backspace || key.delete) {
+        setFieldDraft((text) => text.slice(0, -1))
+        return
+      }
+      if (input && key.ctrl !== true && key.meta !== true) {
+        const clean = input.replace(/[\r\n]+/g, ' ')
+        if (clean !== '') setFieldDraft((text) => (text + clean).slice(0, 2000))
+      }
+      return
+    }
     if (mode === 'approvals') {
       if (key.escape || input === 'q') {
         setMode('list')
@@ -3955,6 +4199,10 @@ export function TeamScene(props) {
       setNotice('')
       return
     }
+    if (input === 'Q') {
+      openQuestionsPanel()
+      return
+    }
     if (input === 'a') {
       setApproveIndex(0)
       setApprovalHistoryOpen(false)
@@ -4076,6 +4324,9 @@ export function TeamScene(props) {
 
   const statusOf = (bot) => {
     if (bot.live?.status === 'working') return { text: `工作中 ${elapsed(bot.live.since)}`, color: 'accent' }
+    // A question ends the Bot's turn but still waits on the user, so it belongs
+    // in the attention column rather than "idle".
+    if (bot.question !== undefined) return { text: '待答问题', color: 'warning' }
     if (bot.live?.status === 'needs-input') return { text: '待回答', color: 'warning' }
     return { text: '空闲', color: 'subtle' }
   }
@@ -4119,6 +4370,7 @@ export function TeamScene(props) {
       rooms.length > 0 ? h(Text, { color: 'subtle' }, ` · ${rooms.length} 群`) : null,
       working > 0 ? h(Text, { color: 'accent' }, ` · 工作 ${working}`) : null,
       waiting > 0 ? h(Text, { color: 'warning' }, ` · 待回答 ${waiting}`) : null,
+      questionTotal > 0 ? h(Text, { color: 'warning' }, ` · 待答 ${questionTotal}`) : null,
       unread > 0 ? h(Text, { color: 'success' }, ` · 未读 ${unread}`) : null,
       team.pending.length > 0 ? h(Text, { color: 'warning' }, ` · 待授权 ${team.pending.length}`) : null,
       approvals.length > 0 ? h(Text, { color: 'warning' }, ` · 待审批 ${approvals.length}`) : null,
@@ -4161,7 +4413,7 @@ export function TeamScene(props) {
     if (compactLayout) {
       // Compact: status dot, name, role abbreviation, unread mark. Everything
       // else (model, folder, foreign claim, failure) stays in the detail line.
-      const dot = bot.live?.status === 'working' ? '●' : bot.live?.status === 'needs-input' ? '◆' : '○'
+      const dot = bot.live?.status === 'working' ? '●' : bot.question !== undefined ? '?' : bot.live?.status === 'needs-input' ? '◆' : '○'
       rowsView.push(h(Box, { key: bot.id, flexDirection: 'row' },
         h(Text, { color: selected ? 'accent' : 'subtle' }, selected ? ' ❯ ' : '   '),
         h(Text, { color: status.color }, `${dot} `),
@@ -4177,6 +4429,7 @@ export function TeamScene(props) {
       h(Text, { bold: selected, color: selected ? 'accent' : 'text' }, pad(bot.name, 13)),
       showRole ? h(Text, { color: 'subtle' }, pad(bot.role || '—', 16)) : null,
       showStatus ? h(Text, { color: status.color }, pad(status.text, 10)) : null,
+      bot.question !== undefined && bot.live?.status === 'working' ? h(Text, { color: 'warning' }, ' ?待答') : null,
       bot.live?.failure === undefined ? null : h(Text, { color: 'error' }, ' !失败'),
       here?.id === bot.id ? h(Text, { color: 'success' }, ' 当前')
         : foreignOf(bot) !== undefined ? h(Text, { color: 'warning' }, ` 他窗:${foreignOf(bot)}`)
@@ -4222,6 +4475,12 @@ export function TeamScene(props) {
       h(Text, { color: detailStatus.color }, detailStatus.text),
       h(Text, { color: 'inactive' }, ` · ${detailRunning}`),
     ),
+    current.question === undefined
+      ? null
+      : h(Box, { key: 'question', flexDirection: 'column' },
+        h(Text, { color: 'warning' }, truncate(`? 待答：${current.question.question}`, Math.max(8, detailWidth - 2))),
+        h(Text, { color: 'inactive' }, truncate(`Q 回答 · ${current.question.options.length} 个选项${current.question.multiSelect ? ' · 多选' : ''}${current.question.allowCustom ? ' · 可自定义' : ''}`, Math.max(8, detailWidth - 2))),
+      ),
     current.live?.failure === undefined
       ? null
       : h(Box, { key: 'failure', flexDirection: 'column' },
@@ -4275,6 +4534,9 @@ export function TeamScene(props) {
       current.unread > 0 ? `未读 ${current.unread}` : '',
     ].filter((part) => part !== '').join(' · '), Math.max(8, columns - 2))),
     historyHead === null ? null : h(Text, { color: history.state === 'error' || history.error !== '' ? 'error' : 'accent' }, truncate(historyHead, Math.max(8, columns - 2))),
+    current.question === undefined
+      ? null
+      : h(Text, { color: 'warning' }, truncate(`? 待答：${current.question.question} · Q 回答`, Math.max(8, columns - 2))),
     h(Text, { color: 'text' }, truncate([
       showHistory ? '历史：' : '最近：',
       detailShown === undefined
@@ -4487,6 +4749,56 @@ export function TeamScene(props) {
   )
 
   const approvalsAt = Math.min(approveIndex, Math.max(0, approvals.length - 1))
+  // ── ask_user panel ──────────────────────────────────────────────────────
+  const questionAt = openQuestions.length === 0 ? -1 : Math.min(questionIndex, openQuestions.length - 1)
+  const questionEntry = questionAt === -1 ? undefined : openQuestions[questionAt]
+  const questionOptionAt = questionEntry === undefined
+    ? 0
+    : Math.min(questionOptionIndex, Math.max(0, questionEntry.card.options.length - 1))
+  const questionName = questionEntry === undefined
+    ? ''
+    : questionEntry.bot?.name ?? `未知会话 ${truncate(questionEntry.sessionId, 8)}`
+  const questionWhen = questionEntry === undefined || questionEntry.card.askedAt === 0
+    ? ''
+    : relative(questionEntry.card.askedAt)
+  const questionView = mode !== 'questions' && mode !== 'question-custom' ? null : h(Box, { key: 'questions', flexDirection: 'column', marginTop: 1 },
+    h(Text, { color: 'accent' }, questionEntry === undefined
+      ? '待答问题（0）'
+      : `待答问题（${questionAt + 1}/${openQuestions.length}）· ${questionName}${questionWhen === '' ? '' : ` · 提问于 ${questionWhen}`} · n/p 切换`),
+    questionEntry === undefined
+      ? h(Text, { color: 'subtle' }, '没有待答问题 · Esc 返回')
+      : h(Box, { key: 'question-card', flexDirection: 'column' },
+        h(Text, { color: 'text' }, questionEntry.card.question),
+        questionEntry.card.detail === ''
+          ? null
+          : h(Text, { color: 'subtle' }, questionEntry.card.detail),
+        ...questionEntry.card.options.map((option, at) => {
+          const picked = questionSelected.includes(option.label)
+          const here = at === questionOptionAt
+          const mark = questionEntry.card.multiSelect ? `[${picked ? 'x' : ' '}] ` : picked ? '◉ ' : '○ '
+          return h(Box, { key: `option-${at}`, flexDirection: 'column' },
+            h(Box, { flexDirection: 'row' },
+              h(Text, { color: here ? 'accent' : 'subtle' }, here ? ' ❯ ' : '   '),
+              h(Text, { color: here ? 'accent' : 'text', bold: here }, `${at + 1}. ${mark}${option.label}`),
+              option.description === '' ? null : h(Text, { color: 'inactive' }, `  — ${option.description}`),
+            ),
+          )
+        }),
+        questionSelected.length === 0
+          ? null
+          : h(Text, { color: 'success' }, `已选：${questionSelected.join(' / ')}`),
+        questionEntry.card.multiSelect
+          ? h(Text, { color: 'inactive' }, '多选：空格或数字键切换，Enter 发送')
+          : h(Text, { color: 'inactive' }, '单选：↑↓ 选择，Enter 发送'),
+        questionEntry.card.allowCustom
+          ? (mode === 'question-custom'
+            ? h(Text, null, h(Text, { color: 'accent' }, ' 自定义回答 '), h(Text, null, fieldDraft === '' ? ' ' : fieldDraft))
+            : h(Text, { color: 'inactive' }, 'c 用一句话自己回答'))
+          : null,
+      ),
+    notice === '' ? null : h(Text, { color: 'warning' }, notice),
+  )
+
   const approvalOutcome = (outcome) => outcome === 'allowed-once'
     ? '允许'
     : outcome === 'rejected' ? '拒绝' : outcome === 'cancelled' ? '取消' : String(outcome ?? '已决')
@@ -5125,7 +5437,7 @@ export function TeamScene(props) {
     }),
   )
 
-  const fullViewNode = approveView ?? capView ?? helpView ?? healthView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? scheduleView ?? scheduleNewView ?? memoryEditView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
+  const fullViewNode = approveView ?? capView ?? helpView ?? healthView ?? editView ?? fieldView ?? modelView ?? effortsView ?? permissionView ?? sectionNewView ?? sectionsView ?? browserNewView ?? browserView ?? computerLevelView ?? computerPanelView ?? avatarView ?? colorView ?? usageView ?? groupView ?? memberView ?? groupEditView ?? roomSectionNewView ?? roomSectionsView ?? roomPermissionView ?? approvalsView ?? questionView ?? scheduleView ?? scheduleNewView ?? memoryEditView ?? memoryAskView ?? memoryMoveView ?? memoryHistoryView ?? memoryView
   const fullFooter = fullViewNode === null ? null : h(Box, { key: 'full-footer', flexDirection: 'column', marginTop: 1 },
     busy ? h(Text, { color: 'accent' }, '处理中…') : null,
     notice === '' ? null : h(Text, { color: 'warning' }, notice),
@@ -5141,15 +5453,15 @@ export function TeamScene(props) {
         ? h(Text, null, h(Text, { color: 'accent' }, ' 搜索 '), h(Text, null, search === '' ? ' ' : search))
         : null,
       notice === '' ? null : h(Text, { color: 'warning' }, notice),
-      needsInputCount + unreadCount > 0
-        ? h(Text, { color: 'inactive' }, `还有 ${needsInputCount} 个待回答 / ${unreadCount} 个新回复 · g/G 跳转`)
+      attention !== ''
+        ? h(Text, { color: 'inactive' }, `还有 ${attention} · g/G 跳转`)
         : null,
       stopAllPending
         ? h(Text, { color: 'warning' }, 'S 确认停止 · Esc 取消')
         : h(Text, { color: 'subtle' }, modeHint(mode)),
       search.trim() === '' ? null : h(Text, { color: 'accent' }, `搜索：${search}（/ 修改 · Esc 清除）`),
       h(Text, { color: canWrite ? 'subtle' : 'error' }, `c 新建${canWrite ? '' : '（不可用）'} · s 停止 · x 删除 · space 详情${detailOpen ? ' · PgUp/PgDn 历史' : ''} · ←/→ 分组 · q 返回${current?.live?.failure === undefined ? '' : ' · X 清除失败'}${team.pending.length > 0 ? ' · p 授权' : ''}${capabilityItems.length > 0 ? ' · v 能力' : ''}${current !== undefined && (foreignOf(current) !== undefined || heldByThisTerminal(current)) ? ' · u 释放' : ''}`),
-      h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · y 复制 · Y 用量 · o 电脑 · I 体检${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
+      h(Text, { color: 'subtle' }, `e 设置 · t 群聊 · Q 待答${questionTotal > 0 ? ` ${questionTotal}` : ''} · y 复制 · Y 用量 · o 电脑 · I 体检${approvals.length > 0 ? ` · a 审批 ${approvals.length}` : ''}`),
       h(Text, { color: 'inactive' }, '进入聊天后人格、记忆、团队工具都由 Bot 运行时接管。'),
     )
     : h(Box, { key: 'footer', flexDirection: 'column', marginTop: 1 },

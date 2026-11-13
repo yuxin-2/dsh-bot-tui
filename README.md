@@ -134,6 +134,7 @@ n        create Chief (empty team)  r      re-read state.json
 /        search name or label       t      group chats
 e        edit this Bot's settings   a      answer pending approvals
 h        approval history (in the a panel)
+Q        answer pending questions (ask_user cards)
 p        approve pending MCPs       v      mount/unmount capabilities (space multi-select)
 u        release this terminal's claim
 space    collapse/expand details
@@ -159,7 +160,11 @@ lists per-site grants (`n` adds one, `x` revokes the selected one). `t` lists
 group chats: create one from a Bot checklist, open it, rename it, change members,
 admin, reply mode, permission, folder, section, notice, memory, or schedules, and
 delete it. `a`
-answers DS Bot's pending approvals (`Enter` allow, `x` reject). `Y` sums the
+answers DS Bot's pending approvals (`Enter` allow, `x` reject). `Q` opens DS Bot's
+`ask_user` cards: `↑`/`↓` or `1`–`6` picks an option, `space` toggles a
+multi-select, `Enter` sends, `c` writes an answer in your own words when the card
+allows it, `n`/`p` switch cards, and `x` closes one without answering. A Bot with
+an open card reads `待答问题` and is a `g` target too. `Y` sums the
 usage ledger by Bot and draws a daily trend (one row per day, block characters,
 width following the terminal); `d`/`w`/`m` narrow it to a day, a week or a month.
 The header shows the total and the daily average; long Bot names truncate in the
@@ -294,6 +299,10 @@ with a temp-file rename under its own lock, so a reader sees a complete revision
   "mounted by another TUI terminal (pid …)". Exit that process (Ctrl+D) or
   `kill <pid>`; in the roster, `u` releases a background session this terminal
   still holds, and a Bot held elsewhere shows `他窗:<pid>`.
+- **Question cards are answered in the roster; interactive view cards are not yet.**
+  `Q` answers DS Bot's `ask_user` cards. `show_view` cards (`state.views`) still
+  render only in the browser, so a Bot waiting on one waits for the desktop/web
+  app; the roster does not pretend otherwise.
 - **Group, approval and memory screens are keyboard-driven.** They cover
   create/open/edit/delete for groups, allow/reject for approvals, and
   view/forget for memory; the browser's drag-and-drop member cards and memory
