@@ -137,6 +137,7 @@ h        approval history (in the a panel)
 p        approve pending MCPs       v      mount/unmount capabilities (space multi-select)
 u        release this terminal's claim
 space    collapse/expand details
+C        toggle compact/normal layout
 ←/→      collapse/expand the selected group
 PgUp/PgDn  detail history (older/newer)
 I        health check (read-only)

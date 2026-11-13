@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { activityOf, clearFailure, markSeen, subscribe, unreadOf } from './activity.js'
 import { approvalHistory, recordApproval, subscribeApprovalHistory } from './approvalHistory.js'
 import { readCollapsed, writeCollapsed } from './collapse.js'
+import { readCompact, writeCompact } from './layout.js'
 import { watchTeam } from './watch.js'
 
 const MAIN_MARK = '★'
@@ -64,7 +65,7 @@ export const HELP_SECTIONS = [
       ['S', '停止所有工作中的 Bot（先确认）'],
       ['x', '删除（连按两次确认）'],
       ['X', '清除选中 Bot 的失败记录'],
-      ['space', '折叠 / 展开详情'],
+      ['space / C', '折叠详情 · 切换紧凑/普通布局'],
       ['← / →', '折叠 / 展开当前分组'],
       ['PgUp / PgDn', '详情面板翻页（更早 / 更晚）'],
       ['/', '按名称或标签搜索'],
@@ -158,7 +159,7 @@ const HELP_ENTRIES = HELP_SECTIONS.flatMap((section) => [
 ])
 
 export const MODE_HINTS = {
-  list: '↑↓ 选择 · Enter 聊天 · m 发消息 · g/G 跳转 · r 刷新 · / 搜索 · ? 帮助',
+  list: '↑↓ 选择 · Enter 聊天 · m 发消息 · g/G 跳转 · r 刷新 · / 搜索 · C 紧凑 · ? 帮助',
   search: '输入筛选 · Enter 确认 · Esc 清除',
   help: '↑↓ 滚动 · Esc 返回',
   create: 'Enter 创建 · Esc 取消',
@@ -522,11 +523,13 @@ export function TeamScene(props) {
   const { React, ui, channel, close } = props
   const { Box, Text, useInput, useTerminalSize } = ui
   const h = React.createElement
+  const { columns, rows } = useTerminalSize()
 
   const [team, setTeam] = React.useState(readTeam)
   const [selectedId, setSelectedId] = React.useState(undefined)
   const [collapsed, setCollapsed] = React.useState(readCollapsed)
   const [collapseReturn, setCollapseReturn] = React.useState({})
+  const [compactLayout, setCompactLayout] = React.useState(() => readCompact() ?? false)
   const [notice, setNotice] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [mode, setMode] = React.useState('list')
@@ -601,7 +604,15 @@ export function TeamScene(props) {
   const [pendingForgetAt, setPendingForgetAt] = React.useState(0)
   const [approvalHistoryOpen, setApprovalHistoryOpen] = React.useState(false)
   const [, rerender] = React.useReducer((n) => n + 1, 0)
-  const { columns, rows } = useTerminalSize()
+
+  React.useEffect(() => {
+    // Narrow terminals default to compact, but a wide terminal never switches
+    // back on its own: once compact, widening keeps the layout stable instead of
+    // making the roster jump under the cursor. An explicit C choice is saved and
+    // wins over both directions.
+    if (columns <= 0 || readCompact() !== undefined) return
+    if (columns < 70 && !compactLayout) setCompactLayout(true)
+  }, [columns, compactLayout])
 
   React.useEffect(() => {
     // Directory watch, not a per-second poll: DS Bot swaps state.json in with a
@@ -3816,6 +3827,13 @@ export function TeamScene(props) {
       setNotice('')
       return
     }
+    if (input === 'C') {
+      const next = !compactLayout
+      setCompactLayout(next)
+      writeCompact(next)
+      setNotice(next ? '已切换到紧凑布局。' : '已切换到普通布局。')
+      return
+    }
     if (input === 'r') {
       setTeam(readTeam())
       setPendingDelete(undefined)
@@ -3950,6 +3968,17 @@ export function TeamScene(props) {
     return { text: '空闲', color: 'subtle' }
   }
 
+  // Compact rows have no room for the full role, so use initials for a
+  // multi-word role and the first few characters for a single word.
+  const roleShort = (role) => {
+    const text = String(role ?? '').trim()
+    if (text === '') return '—'
+    const parts = text.split(/\s+/).filter(Boolean)
+    return truncate(parts.length > 1
+      ? parts.map((part) => Array.from(part)[0]).join('').toUpperCase()
+      : Array.from(text).slice(0, 3).join(''), 6)
+  }
+
   // Why a Bot has no tools: DS Bot keeps the MCP connection state per Bot and
   // only the browser surfaces it. A terminal that cannot start `project-fs`
   // would otherwise look like "approved but still no tools".
@@ -4006,6 +4035,19 @@ export function TeamScene(props) {
     }
     const bot = item.bot
     const status = statusOf(bot)
+    if (compactLayout) {
+      // Compact: status dot, name, role abbreviation, unread mark. Everything
+      // else (model, folder, foreign claim, failure) stays in the detail line.
+      const dot = bot.live?.status === 'working' ? '●' : bot.live?.status === 'needs-input' ? '◆' : '○'
+      rowsView.push(h(Box, { key: bot.id, flexDirection: 'row' },
+        h(Text, { color: selected ? 'accent' : 'subtle' }, selected ? ' ❯ ' : '   '),
+        h(Text, { color: status.color }, `${dot} `),
+        h(Text, { bold: selected, color: selected ? 'accent' : 'text' }, pad(bot.name, 14)),
+        h(Text, { color: 'subtle' }, pad(roleShort(bot.role), 6)),
+        showsUnread(bot) ? h(Text, { color: 'success' }, '●新') : null,
+      ))
+      continue
+    }
     rowsView.push(h(Box, { key: bot.id, flexDirection: 'row' },
       h(Text, { color: selected ? 'accent' : 'subtle' }, selected ? ' ❯ ' : '   '),
       h(Text, { color: bot.main ? 'accent' : 'text' }, bot.main ? `${MAIN_MARK} ` : '  '),
@@ -4117,7 +4159,10 @@ export function TeamScene(props) {
         : `${detailShown.role === 'user' ? '你' : 'Bot'}: ${detailShown.text}`,
     ].join(''), Math.max(8, columns - 2))),
   )
-  const detail = !detailOpen || current === undefined ? null : detailWide ? detailPanel : detailLine
+  const detail = !detailOpen || current === undefined
+    ? null
+    : compactLayout ? detailLine
+      : detailWide ? detailPanel : detailLine
 
   const boundNames = (name) => {
     const bound = team.bots.filter((bot) => bot.capabilities.includes(name)).map((bot) => bot.name)
@@ -4979,7 +5024,7 @@ export function TeamScene(props) {
     ? h(Text, { color: 'subtle' }, `没有匹配「${search}」的 Bot · Esc 清除`)
     : h(Box, { flexDirection: 'column' }, rowsView)
 
-  const body = fullViewNode ?? (detailWide && detail !== null
+  const body = fullViewNode ?? (detailWide && detail !== null && !compactLayout
     ? h(Box, { key: 'body', flexDirection: 'row', width: '100%' },
       h(Box, { flexDirection: 'column', width: Math.max(20, columns - detailWidth - 4) }, empty),
       h(Box, { flexDirection: 'column', width: detailWidth, paddingLeft: 1 }, detail))
