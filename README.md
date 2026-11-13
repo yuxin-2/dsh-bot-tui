@@ -158,7 +158,10 @@ group chats: create one from a Bot checklist, open it, rename it, change members
 admin, reply mode, permission, folder, section, notice, memory, or schedules, and
 delete it. `a`
 answers DS Bot's pending approvals (`Enter` allow, `x` reject). `y` sums the
-usage ledger by Bot; `d`/`w`/`m` narrow it to a day, a week or a month. `o` opens
+usage ledger by Bot and draws a daily trend (one row per day, block characters,
+width following the terminal); `d`/`w`/`m` narrow it to a day, a week or a month.
+The header shows the total and the daily average; long Bot names truncate in the
+rows and stay complete in the detail line. `o` opens
 the Computer panel: the global switch, provider retry, each Bot's level, and the
 app grants that can be revoked.
 

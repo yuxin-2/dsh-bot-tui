@@ -572,6 +572,7 @@ export function TeamScene(props) {
   const [browserSite, setBrowserSite] = React.useState('')
   const [browserStep, setBrowserStep] = React.useState(0)
   const [usageItems, setUsageItems] = React.useState([])
+  const [usageTrend, setUsageTrend] = React.useState([])
   const [usageBusy, setUsageBusy] = React.useState(false)
   const [usageDays, setUsageDays] = React.useState(7)
   const [memoryTarget, setMemoryTarget] = React.useState(undefined)
@@ -1537,12 +1538,24 @@ export function TeamScene(props) {
     setMode('usage')
     setUsageBusy(true)
     setUsageItems([])
+    setUsageTrend([])
     setNotice('')
     try {
       const view = await rt.usageView({ timeZone: localZone() })
       const owners = Array.isArray(view?.owners) ? view.owners : []
       const cutoff = new Date(Date.now() - Math.max(1, days - 1) * 86400000)
       const since = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`
+      // One bucket per calendar day in the selected range, oldest first. Days
+      // with no ledger row stay in the array at zero instead of disappearing.
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const dayKeys = []
+      for (let back = Math.max(1, days) - 1; back >= 0; back -= 1) {
+        const day = new Date(today)
+        day.setDate(today.getDate() - back)
+        dayKeys.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`)
+      }
+      const trend = new Map(dayKeys.map((key) => [key, { key, tokens: 0, calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }]))
       const totals = owners.map((owner, at) => ({
         key: owner.key ?? String(at),
         name: owner.name || owner.key || String(at),
@@ -1558,12 +1571,27 @@ export function TeamScene(props) {
         const bucket = totals[Number(row[1])]
         if (bucket === undefined) continue
         if (typeof row[0] === 'string' && row[0].slice(0, 10) < since) continue
-        bucket.input += Number(row[4] ?? 0)
-        bucket.cacheRead += Number(row[5] ?? 0)
-        bucket.cacheWrite += Number(row[6] ?? 0)
-        bucket.output += Number(row[7] ?? 0)
-        bucket.calls += Number(row[8] ?? 0)
+        const input = Number(row[4] ?? 0)
+        const cacheRead = Number(row[5] ?? 0)
+        const cacheWrite = Number(row[6] ?? 0)
+        const output = Number(row[7] ?? 0)
+        const calls = Number(row[8] ?? 0)
+        bucket.input += input
+        bucket.cacheRead += cacheRead
+        bucket.cacheWrite += cacheWrite
+        bucket.output += output
+        bucket.calls += calls
+        const day = typeof row[0] === 'string' ? trend.get(row[0].slice(0, 10)) : undefined
+        if (day !== undefined) {
+          day.input += input
+          day.cacheRead += cacheRead
+          day.cacheWrite += cacheWrite
+          day.output += output
+          day.calls += calls
+          day.tokens += input + cacheRead + cacheWrite + output
+        }
       }
+      setUsageTrend(dayKeys.map((key) => trend.get(key)))
       setUsageItems(totals
         .filter((item) => item.calls > 0 || item.input + item.output + item.cacheRead + item.cacheWrite > 0)
         .sort((a, b) => (b.input + b.output + b.cacheRead + b.cacheWrite) - (a.input + a.output + a.cacheRead + a.cacheWrite)))
@@ -4688,22 +4716,45 @@ export function TeamScene(props) {
     calls: sum.calls + item.calls,
     tokens: sum.tokens + item.input + item.output + item.cacheRead + item.cacheWrite,
   }), { calls: 0, tokens: 0 })
+  const usageAverage = usageDays > 0 ? Math.round(usageTotal.tokens / usageDays) : 0
+  const usageTrendMax = usageTrend.reduce((max, day) => Math.max(max, day.tokens), 0)
+  const usageTrendHeight = Math.max(1, Math.min(usageTrend.length, Math.max(3, rows - 14)))
+  const usageTrendShown = usageTrend.slice(-usageTrendHeight)
+  const usageTrendHidden = usageTrend.length - usageTrendShown.length
+  const usageBarWidth = Math.max(3, columns - 30)
+  const usageBlocks = '▁▂▃▄▅▆▇█'
+  const usageTrendRows = usageTrendShown.map((day) => {
+    const level = usageTrendMax <= 0 ? 0 : Math.max(0, Math.min(7, Math.ceil((day.tokens / usageTrendMax) * 8) - 1))
+    return h(Box, { key: day.key, flexDirection: 'row' },
+      h(Text, { color: 'subtle' }, pad(day.key.slice(5), 6)),
+      h(Text, { color: day.tokens > 0 ? 'accent' : 'subtle' }, usageBlocks[level].repeat(usageBarWidth)),
+      h(Text, { color: 'inactive' }, ` ${compact(day.tokens)}`),
+    )
+  })
+  const usageBotHeight = Math.max(1, Math.min(usageItems.length, Math.max(1, rows - 12 - usageTrendHeight)))
+  const currentUsage = usageItems.find((item) => (item.kind === 'bot' || item.kind === 'room') && item.id === current?.id)
   const usageView = mode !== 'usage' ? null : h(Box, { key: 'usage', flexDirection: 'column', marginTop: 1 },
     h(Text, { color: 'accent' }, `用量（${current?.name ?? '?'} · 近 ${usageDays} 天 · d/w/m 切换 · r 刷新 · Esc 返回）`),
     usageBusy
       ? h(Text, { color: 'subtle' }, '统计中…')
       : usageItems.length === 0
       ? h(Text, { color: 'subtle' }, '还没有记录')
-      : usageItems.slice(0, listHeight).map((item, at) => {
-        const mine = (item.kind === 'bot' || item.kind === 'room') && item.id === current?.id
-        return h(Box, { key: item.key, flexDirection: 'row' },
-          h(Text, { color: mine ? 'accent' : 'subtle' }, mine ? ' ❯ ' : '   '),
-          h(Text, { bold: mine, color: mine ? 'accent' : 'text' }, pad(truncate(item.name, 16), 18)),
-          h(Text, { color: 'subtle' }, pad(`${compact(item.calls)} 次`, 8)),
-          h(Text, { color: 'inactive' }, `入 ${compact(item.input)} · 出 ${compact(item.output)} · 缓存 ${compact(item.cacheRead + item.cacheWrite)}`),
-        )
-      }),
-    usageItems.length === 0 ? null : h(Text, { color: 'inactive' }, `合计：${compact(usageTotal.calls)} 次调用 · ${compact(usageTotal.tokens)} tokens`),
+      : h(Box, { flexDirection: 'column' },
+        h(Text, { color: 'inactive' }, `合计：${compact(usageTotal.calls)} 次调用 · ${compact(usageTotal.tokens)} tokens · 日均 ${compact(usageAverage)} tokens`),
+        h(Text, { color: 'accent' }, `按天趋势（${usageTrendHidden > 0 ? `最近 ${usageTrendShown.length} 天` : `近 ${usageTrend.length} 天`} · 每格 ${compact(usageTrendMax)} tokens）`),
+        ...usageTrendRows,
+        h(Text, { color: 'accent' }, `按 Bot（${usageItems.length}）`),
+        ...usageItems.slice(0, usageBotHeight).map((item, at) => {
+          const mine = (item.kind === 'bot' || item.kind === 'room') && item.id === current?.id
+          return h(Box, { key: item.key, flexDirection: 'row' },
+            h(Text, { color: mine ? 'accent' : 'subtle' }, mine ? ' ❯ ' : '   '),
+            h(Text, { bold: mine, color: mine ? 'accent' : 'text' }, pad(truncate(item.name, 16), 18)),
+            h(Text, { color: 'subtle' }, pad(`${compact(item.calls)} 次`, 8)),
+            h(Text, { color: 'inactive' }, `入 ${compact(item.input)} · 出 ${compact(item.output)} · 缓存 ${compact(item.cacheRead + item.cacheWrite)}`),
+          )
+        }),
+        currentUsage === undefined ? null : h(Text, { color: 'inactive' }, `详情：${current?.name ?? currentUsage.name} · 入 ${compact(currentUsage.input)} · 出 ${compact(currentUsage.output)} · 缓存 ${compact(currentUsage.cacheRead + currentUsage.cacheWrite)} · ${compact(currentUsage.calls)} 次`),
+      ),
   )
 
   const memoryAt = Math.min(memoryIndex, Math.max(0, memoryEntries.length - 1))
